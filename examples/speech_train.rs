@@ -9,7 +9,7 @@ use std::fs::{read_dir, File};
 // struct Sine {}
 // #[model("models/train/lenet.tflite", 1, "mse", false)]
 // struct LeNet {}
-#[model("models/train/speech_small_softmax.tflite", 2, "crossentropy", true)]
+#[model("models/train/speech_small_softmax.tflite", 2, "crossentropy", true, [0.0], [8192.0])]
 struct Speech {}
 
 fn main() {
@@ -116,6 +116,7 @@ fn main() {
             // panic!();
             if index % batch == 0 {
                 // println!("final_gradient: {}", model.weights0_gradient);
+                println!("batch {}", index/batch)
                 model.update_layers(batch, learning_rate);
             }
         }

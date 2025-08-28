@@ -13,7 +13,7 @@ use std::fs;
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens};
-use syn::{parse_macro_input, ItemStruct, LitBool};
+use syn::{parse_macro_input, ExprArray, ItemStruct, LitBool};
 
 use crate::tflite_flatbuffers::tflite::TensorType;
 use ops::*;
@@ -41,6 +41,10 @@ struct Args {
     loss_function: LitStr,
     #[struct_meta(unnamed)]
     skip_last_layer_train: LitBool,
+    #[struct_meta(unnamed)]
+    back_norms: ExprArray,
+    #[struct_meta(unnamed)]
+    grad_norms: ExprArray,
 }
 
 /// The entry point of MicroFlow.
@@ -55,6 +59,27 @@ pub fn model(args: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemStruct);
     let mut item = item.clone();
 
+    if args.back_norms.elems.len() != args.grad_norms.elems.len() {
+        abort_call_site!("the clip values for the backpropagation and the gradient clipping must have the same size, found {}, {}",
+             args.back_norms.elems.len(),
+             args.grad_norms.elems.len());
+    }
+    for ele in args.back_norms.elems.iter() {
+        if let syn::Expr::Lit(ele_lit) = ele {
+            if let syn::Lit::Float(_) = &ele_lit.lit {
+            } else {
+                abort_call_site!("the arguments of the back_norms must be floats: {:?}", ele)
+            }
+        }
+    }
+    for ele in args.grad_norms.elems.iter() {
+        if let syn::Expr::Lit(ele_lit) = ele {
+            if let syn::Lit::Float(_) = &ele_lit.lit {
+            } else {
+                abort_call_site!("the arguments of the grad_norms must be floats: {:?}", ele)
+            }
+        }
+    }
     let buf = fs::read(args.path.value()).unwrap_or_else(|_| {
         abort_call_site!(
             "couldn't find '{}', please provide a valid path",
@@ -124,6 +149,7 @@ pub fn model(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut new_declarations = TokenStream2::new();
     let mut backward = TokenStream2::new();
     let mut update = TokenStream2::new();
+    let mut layer_counter = 0;
     for (index, operator) in operators.iter().enumerate() {
         let layer_num = index as i32 - (operators.len() as i32 - layers_to_train as i32);
         if layer_num < 0 {
@@ -157,13 +183,55 @@ pub fn model(args: TokenStream, item: TokenStream) -> TokenStream {
                     .deprecated_builtin_code() as i32,
             ) {
                 BuiltinOperator::FULLY_CONNECTED => {
-                    fully_connected::parse_indexed(operator, tensors, buffers, index, layer_num)
+                    let back_norm = if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Float(lit_int),
+                        ..
+                    }) = &args.back_norms.elems[layer_counter]
+                    {
+                        lit_int.base10_parse().unwrap()
+                    } else {
+                        abort_call_site!("error during norm parsing")
+                    };
+                    let grad_norm = if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Float(lit_int),
+                        ..
+                    }) = &args.grad_norms.elems[layer_counter]
+                    {
+                        lit_int.base10_parse().unwrap()
+                    } else {
+                        abort_call_site!("error during norm parsing")
+                    };
+                    layer_counter += 1;
+                    fully_connected::parse_indexed(
+                        operator, tensors, buffers, index, layer_num, back_norm, grad_norm,
+                    )
                 }
                 BuiltinOperator::DEPTHWISE_CONV_2D => {
                     depthwise_conv_2d::parse_indexed(operator, tensors, buffers, index, layer_num)
                 }
                 BuiltinOperator::CONV_2D => {
-                    conv_2d::parse_indexed(operator, tensors, buffers, index, layer_num)
+                    let back_norm = if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Float(lit_int),
+                        ..
+                    }) = &args.back_norms.elems[layer_counter]
+                    {
+                        lit_int.base10_parse().unwrap()
+                    } else {
+                        abort_call_site!("error during norm parsing")
+                    };
+                    let grad_norm = if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Float(lit_int),
+                        ..
+                    }) = &args.grad_norms.elems[layer_counter]
+                    {
+                        lit_int.base10_parse().unwrap()
+                    } else {
+                        abort_call_site!("error during norm parsing")
+                    };
+                    layer_counter += 1;
+                    conv_2d::parse_indexed(
+                        operator, tensors, buffers, index, layer_num, back_norm, grad_norm,
+                    )
                 }
                 BuiltinOperator::AVERAGE_POOL_2D => {
                     average_pool_2d::parse_indexed(operator, tensors, layer_num)

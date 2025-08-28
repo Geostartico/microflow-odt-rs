@@ -22,6 +22,8 @@ pub(crate) struct TokenConv2D<T: TokenQuantized> {
     pub(crate) index: usize,
     pub(crate) layer_index: i32,
     pub(crate) train: bool,
+    pub(crate) back_norm: f32,
+    pub(crate) gradient_norm: f32,
 }
 
 /// Parses the [`TokenConv2D`] struct from the given operator.
@@ -39,6 +41,8 @@ pub(crate) fn parse_indexed(
     buffers: Vector<ForwardsUOffset<Buffer>>,
     index: usize,
     layer_index: i32,
+    back_norm: f32,
+    gradient_norm: f32,
 ) -> Box<dyn TrainToTokens> {
     let inputs = operator.inputs().unwrap();
     let input_type = tensors.get(inputs.get(0) as usize).type_();
@@ -49,6 +53,8 @@ pub(crate) fn parse_indexed(
             buffers,
             index,
             layer_index,
+            back_norm,
+            gradient_norm,
         )),
         TensorType::UINT8 => Box::new(TokenConv2D::<u8>::new(
             operator,
@@ -56,6 +62,8 @@ pub(crate) fn parse_indexed(
             buffers,
             index,
             layer_index,
+            back_norm,
+            gradient_norm,
         )),
         _ => unimplemented!(),
     }
@@ -79,10 +87,10 @@ pub(crate) fn parse(
     let input_type = tensors.get(inputs.get(0) as usize).type_();
     match input_type {
         TensorType::INT8 => Box::new(TokenConv2D::<i8>::new(
-            operator, tensors, buffers, index, -1,
+            operator, tensors, buffers, index, -1, -1f32, -1f32,
         )),
         TensorType::UINT8 => Box::new(TokenConv2D::<u8>::new(
-            operator, tensors, buffers, index, -1,
+            operator, tensors, buffers, index, -1, -1f32, -1f32,
         )),
         _ => unimplemented!(),
     }
@@ -103,6 +111,8 @@ impl<T: TokenQuantized> TokenConv2D<T> {
         buffers: Vector<ForwardsUOffset<Buffer>>,
         index: usize,
         layer_index: i32,
+        back_norm: f32,
+        gradient_norm: f32,
     ) -> Self {
         let inputs = operator.inputs().unwrap();
         let input = TokenTensor4D::from_empty_tensor(tensors.get(inputs.get(0) as usize));
@@ -128,6 +138,8 @@ impl<T: TokenQuantized> TokenConv2D<T> {
             layer_index,
             train: false,
             scale_bias: biases.scale,
+            back_norm,
+            gradient_norm,
         }
     }
 
@@ -266,8 +278,9 @@ impl<T: TokenQuantized> TrainToTokens for TokenConv2D<T> {
             .iter()
             .map(|x| quote! { #x })
             .collect::<Vec<_>>();
+        let back_norm = self.back_norm;
         let prepend = quote! {
-            let (backward_gradient, weight_gradient) = microflow::gradient_conv_2d::update_grad_conv_2d(
+            let backward_gradient = microflow::gradient_conv_2d::update_grad_conv_2d(
                 &#input_ident,
                 &#weights_ident,
                 &mut #weights_gradient_ident,
@@ -280,6 +293,7 @@ impl<T: TokenQuantized> TrainToTokens for TokenConv2D<T> {
                 #view_padding,
                 [#(#bias_scale),*],
                 learning_rate,
+                #back_norm
             );
             // println!("gradient weights: {}",weight_gradient.iter().fold(String::new(), |accarr, batch|accarr + &batch.map(|el|el.iter().fold(String::new(),|sum, el1|sum +" "+ &el1.to_string())).to_string()));
             // println!("gradient input: {}",backward_gradient[0].map(|el|el.iter().fold(String::new(),|sum, el1|sum +" " +&el1.to_string())));
@@ -307,7 +321,14 @@ impl<T: TokenQuantized> TrainToTokens for TokenConv2D<T> {
             let field_ident = format_ident!("constants{}_gradient", self.layer_index as usize);
             parse_quote!(self.#field_ident)
         };
+        let gradient_norm = self.gradient_norm;
         let update = quote! {
+            // microflow::update_layer::update_weights_4D(
+            //     &mut #weights_ident,
+            //     &#weights_gradient_ident,
+            //     batch_size,
+            //     learning_rate,
+            // );
             microflow::update_layer::update_weights_4D(
                 &mut #weights_ident,
                 &#weights_gradient_ident,

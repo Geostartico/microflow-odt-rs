@@ -1,13 +1,9 @@
 use libm::sinf;
 use microflow_train_macros::model;
 use nalgebra::{matrix, SMatrix};
-use num_traits::cast;
 use rand::Rng;
-use std::{
-    fs::{read_dir, File},
-    io::Write,
-};
-#[model("models/train/sine.tflite", 1, "mse", false)]
+use std::{fs::File, io::Write};
+#[model("models/train/sine.tflite", 2, "mse", false, [16000.0,0.0],[1024.0,256.0])]
 struct Sine {}
 
 fn main() {
@@ -17,7 +13,7 @@ fn main() {
     let output_zero_point = 1i8;
     let epochs = 500;
     let samples = 1000;
-    let batch = 64;
+    let batch = 16;
     let learning_rate = 0.01;
     let mut output_file = File::create("output_sine_untrained").unwrap();
     for sample in 0..samples {

@@ -1,13 +1,12 @@
-use libm::sinf;
 use microflow_train_macros::model;
-use nalgebra::{matrix, Matrix, SMatrix};
-use ndarray::{Array3, Array4};
+use nalgebra::{matrix, SMatrix};
+use ndarray::Array3;
 use ndarray_npy::read_npy;
-use rand::{rng, seq::SliceRandom, thread_rng, Rng};
-use std::fs::{read_dir, File};
+use rand::{rng, seq::SliceRandom};
+use std::fs::read_dir;
 // #[model("models/train/sine.tflite", 1, "mse", false)]
 // struct Sine {}
-#[model("models/train/lenet.tflite", 2, "crossentropy", true)]
+#[model("models/train/lenet.tflite", 3, "crossentropy", true, [30000.0,0.0], [4096.0,1024.0])]
 struct LeNet {}
 // #[model("models/train/speech_small.tflite", 1, "crossentropy", false)]
 // struct Speech {}
@@ -129,7 +128,7 @@ fn main() {
             if index % batch == 0 {
                 println!("batch: {}", index / batch);
                 model.update_layers(batch, learning_rate);
-                println!("new bias: {}", model.constants0.0)
+                // println!("new bias: {}", model.constants0.0)
             }
         }
         model.update_layers(batch, learning_rate);

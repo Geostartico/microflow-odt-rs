@@ -23,6 +23,8 @@ pub(crate) struct TokenFullyConnected<T: TokenQuantized> {
     pub(crate) layer_index: i32,
     pub(crate) input_zero_point: T,
     pub(crate) train: bool,
+    pub(crate) back_norm: f32,
+    pub(crate) gradient_norm: f32,
 }
 
 /// Parses the [`TokenFullyConnected`] struct from the given operator.
@@ -40,6 +42,8 @@ pub(crate) fn parse_indexed(
     buffers: Vector<ForwardsUOffset<Buffer>>,
     index: usize,
     layer_index: i32,
+    back_norm: f32,
+    gradient_norm: f32,
 ) -> Box<dyn TrainToTokens> {
     let inputs = operator.inputs().unwrap();
     let input_type = tensors.get(inputs.get(0) as usize).type_();
@@ -50,6 +54,8 @@ pub(crate) fn parse_indexed(
             buffers,
             index,
             layer_index,
+            back_norm,
+            gradient_norm,
         )),
         TensorType::UINT8 => Box::new(TokenFullyConnected::<u8>::new(
             operator,
@@ -57,6 +63,8 @@ pub(crate) fn parse_indexed(
             buffers,
             index,
             layer_index,
+            back_norm,
+            gradient_norm,
         )),
         _ => unimplemented!(),
     }
@@ -80,10 +88,10 @@ pub(crate) fn parse(
     let input_type = tensors.get(inputs.get(0) as usize).type_();
     match input_type {
         TensorType::INT8 => Box::new(TokenFullyConnected::<i8>::new(
-            operator, tensors, buffers, index, -1,
+            operator, tensors, buffers, index, -1, -1f32, -1f32,
         )),
         TensorType::UINT8 => Box::new(TokenFullyConnected::<u8>::new(
-            operator, tensors, buffers, index, -1,
+            operator, tensors, buffers, index, -1, -1f32, -1f32,
         )),
         _ => unimplemented!(),
     }
@@ -104,6 +112,8 @@ impl<T: TokenQuantized> TokenFullyConnected<T> {
         buffers: Vector<ForwardsUOffset<Buffer>>,
         index: usize,
         layer_index: i32,
+        back_norm: f32,
+        gradient_norm: f32,
     ) -> Self {
         let inputs = operator.inputs().unwrap();
         let input = TokenTensor2D::from_empty_tensor(tensors.get(inputs.get(0) as usize));
@@ -131,6 +141,8 @@ impl<T: TokenQuantized> TokenFullyConnected<T> {
             layer_index,
             input_zero_point: *input.zero_point.get(0).unwrap(),
             train: false,
+            back_norm,
+            gradient_norm,
         }
     }
 
@@ -274,6 +286,7 @@ impl<T: TokenQuantized> TrainToTokens for TokenFullyConnected<T> {
             let field_ident = format_ident!("constants{}_gradient", self.layer_index as usize);
             parse_quote!(self.#field_ident)
         };
+        let back_norm = self.back_norm;
         let prepend = quote! {
             let backward_gradient = microflow::gradient_fully_connected::update_grad_fully_connected(
                 &#input_ident,
@@ -286,6 +299,7 @@ impl<T: TokenQuantized> TrainToTokens for TokenFullyConnected<T> {
                 backward_gradient,
                 #bias_scale,
                 learning_rate,
+                #back_norm,
             );
             // println!("input: {}, {}, {}", #input_ident.buffer.view((0, 0), (1, 4)),#input_ident.zero_point[0], #input_ident.scale[0]);
             // println!("output net: {}",#output_ident.buffer);
@@ -324,6 +338,7 @@ impl<T: TokenQuantized> TrainToTokens for TokenFullyConnected<T> {
         let weights_shape_1 = self.weights.shape[1];
         let input_zero_point = self.input_zero_point;
         let perc: usize = (weights_size as f32 * 0.25).floor() as usize;
+        let clip_norm = self.gradient_norm;
         let update = quote! {
             // microflow::update_layer::update_weights_2D(
             //     &mut #weights_ident,
@@ -342,6 +357,7 @@ impl<T: TokenQuantized> TrainToTokens for TokenFullyConnected<T> {
                 &#weights_gradient_ident,
                 batch_size,
                 learning_rate,
+                #clip_norm,
             );
             microflow::update_layer::update_weights_2D_float(
                 &mut #constants_ident.0,
