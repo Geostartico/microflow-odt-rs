@@ -1,4 +1,5 @@
 use libm::sinf;
+use microflow::buffer::Buffer4D;
 use microflow_train_macros::model;
 use nalgebra::{base::Matrix, base::SMatrix, matrix};
 use ndarray::{Array3, Array4};
@@ -9,7 +10,7 @@ use std::fs::{read_dir, File};
 // struct Sine {}
 // #[model("models/train/lenet.tflite", 1, "mse", false)]
 // struct LeNet {}
-#[model("models/train/speech_small_softmax.tflite", 2, "crossentropy", true, [0.0], [8192.0])]
+#[model("models/train/speech_small_softmax.tflite", 4, "crossentropy", true, [80000.0,0.0], [8192.0,8192.0])]
 struct Speech {}
 
 fn main() {
@@ -67,10 +68,26 @@ fn main() {
     let output_scale = 0.00390625;
     let output_zero_point = -128i8;
     println!("train elements {}", train_vec.len());
+    println!(
+        "validation split {}/{}",
+        validation_vec.iter().filter(|el| el.1 == 0).count(),
+        validation_vec.len()
+    );
+    // let saturated = model
+    //     .weights0
+    //     .buffer
+    //     .map(|el| if el >= 126 || el <= -126 { 1 } else { 0 })
+    //     .fold(0, |acc, el| acc + el);
     let saturated = model
         .weights0
         .buffer
-        .map(|el| if el >= 126 || el <= -126 { 1 } else { 0 })
+        .iter()
+        .flat_map(|batch| {
+            batch.iter().flat_map(|arr| {
+                arr.iter()
+                    .map(|el| if *el >= 126 || *el <= -126 { 1 } else { 0 })
+            })
+        })
         .fold(0, |acc, el| acc + el);
     println!("saturated params initially {}", saturated);
     let correct = validation_vec
@@ -94,7 +111,12 @@ fn main() {
         .unwrap();
     println!("validation accuracy : {}/{}", correct, validation_vec.len());
     for _ in 0..epochs {
-        let initial = model.weights0.buffer.clone().cast::<i32>();
+        // let initial = model.weights0.buffer.clone().cast::<i32>();
+        let initial = model
+            .weights0
+            .buffer
+            .clone()
+            .map(|batch| batch.map(|arr| arr.map(|el| el as i32)));
         train_vec.shuffle(&mut rng());
         for (index, sample) in train_vec.iter().enumerate() {
             // println!("expected_output: {}", sample.1);
@@ -115,8 +137,13 @@ fn main() {
             // println!("gradient: {}", model.weights0_gradient.view((0, 0), (4, 2)));
             // panic!();
             if index % batch == 0 {
-                // println!("final_gradient: {}", model.weights0_gradient);
-                println!("batch {}", index/batch)
+                // println!(
+                //     "final_gradient: {}",
+                //     model.weights0_gradient.iter().fold(0i32, |meh, moh| meh
+                //         + moh.fold(0i32, |acc, el| acc
+                //             + el.iter().fold(0i32, |acc1, el1| acc1 + el1)))
+                // );
+                println!("batch {}", index / batch);
                 model.update_layers(batch, learning_rate);
             }
         }
@@ -140,18 +167,42 @@ fn main() {
             })
             .reduce(|acc, val| acc + val)
             .unwrap();
-        let fin = model.weights0.buffer.cast::<i32>();
-        let diff = fin - initial;
+        // let fin = model.weights0.buffer.cast::<i32>();
+        let fin = model
+            .weights0
+            .buffer
+            .clone()
+            .map(|batch| batch.map(|arr| arr.map(|el| el as i32)));
+        let diff: Buffer4D<i32, 1, 10, 8, 8> = core::array::from_fn(|batch| {
+            SMatrix::from_fn(|i, j| {
+                core::array::from_fn(|chan| fin[batch][(i, j)][chan] - initial[batch][(i, j)][chan])
+            })
+        });
         let changed = diff
-            .map(|el| if el != 0 { 1 } else { 0 })
+            .iter()
+            .flat_map(|batch| {
+                batch
+                    .iter()
+                    .flat_map(|arr| arr.iter().map(|el| if *el != 0 { 1 } else { 0 }))
+            })
             .fold(0, |acc, el| acc + el);
         let saturated = model
             .weights0
             .buffer
-            .map(|el| if el >= 126 || el <= -126 { 1 } else { 0 })
+            .iter()
+            .flat_map(|batch| {
+                batch.iter().flat_map(|arr| {
+                    arr.iter()
+                        .map(|el| if *el >= 126 || *el <= -126 { 1 } else { 0 })
+                })
+            })
             .fold(0, |acc, el| acc + el);
         println!("saturated params {}", saturated);
-        println!("changed params {}", changed);
+        println!(
+            "changed params {}/{}",
+            changed,
+            diff.len() * diff[0].shape().0 * diff[0].shape().0 * diff[0][0].len()
+        );
         println!("validation accuracy : {}/{}", correct, validation_vec.len());
     }
 }

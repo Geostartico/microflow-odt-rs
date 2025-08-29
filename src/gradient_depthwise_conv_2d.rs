@@ -3,7 +3,7 @@ use crate::{
     buffer::{Buffer2D, Buffer4D},
     quantize::{quantize, Trainable},
     tensor::{Tensor4D, TensorView, TensorViewPadding},
-    update_layer::{accumulate_gradient_4D, get_input_index, update_weights_4D},
+    update_layer::{accumulate_gradient_4D, clip_norm_4D, get_input_index},
 };
 use core::array;
 use nalgebra::{SMatrix, SVector};
@@ -24,11 +24,11 @@ pub fn update_grad_depthwise_conv_2d<
     weights: &Tensor4D<T, 1, WEIGHTS_ROWS, WEIGHTS_COLS, WEIGHTS_CHANS, FILTER_QUANTS>,
     weights_gradient: &mut Buffer4D<i32, 1, WEIGHTS_ROWS, WEIGHTS_COLS, WEIGHTS_CHANS>,
     constants: &(
-        Buffer2D<f32, INPUT_CHANS, 1>,
+        Buffer2D<f32, WEIGHTS_CHANS, 1>,
         Buffer2D<f32, FILTER_QUANTS, 1>,
     ),
     constants_gradient: &mut (
-        Buffer2D<f32, INPUT_CHANS, 1>,
+        Buffer2D<f32, WEIGHTS_CHANS, 1>,
         Buffer2D<f32, FILTER_QUANTS, 1>,
     ),
     outputs: Tensor4D<T, 1, OUTPUT_ROWS, OUTPUT_COLS, WEIGHTS_CHANS, 1>,
@@ -38,7 +38,9 @@ pub fn update_grad_depthwise_conv_2d<
     padding: TensorViewPadding,
     bias_scale: [f32; FILTER_QUANTS],
     learning_rate: f32,
+    backwards_clip_val: f32,
 ) -> Buffer4D<i32, 1, INPUT_ROWS, INPUT_COLS, INPUT_CHANS> {
+    let output_grad = clip_norm_4D(&output_grad, backwards_clip_val);
     let grad_weight = grad_depthwise_conv_2d_weights(
         input,
         weights,
@@ -150,7 +152,7 @@ pub fn grad_depthwise_conv_2d_inputs<
                             .to_superset();
                         let tmp: i32 = weights.buffer[0][(filter_row, filter_col)][output_channel]
                             .to_superset();
-                        accum[0][cur_coord][if output_channel <= INPUT_CHANS {
+                        accum[0][cur_coord][if output_channel < INPUT_CHANS {
                             output_channel
                         } else {
                             0
@@ -184,22 +186,15 @@ pub fn grad_depthwise_conv_2d_weights<
     activation: &FusedActivation,
     strides: (usize, usize),
     padding: TensorViewPadding,
-) -> Buffer4D<T, 1, WEIGHTS_ROWS, WEIGHTS_COLS, WEIGHTS_CHANS> {
+) -> Buffer4D<i32, 1, WEIGHTS_ROWS, WEIGHTS_COLS, WEIGHTS_CHANS> {
     let mut accum: Buffer4D<i32, 1, WEIGHTS_ROWS, WEIGHTS_COLS, WEIGHTS_CHANS> =
         array::from_fn(|_| SMatrix::from_fn(|_, _| [0i32; WEIGHTS_CHANS]));
-    let normalization_param = output_grad.iter().fold(0f32, |acc, val| {
-        acc + val.iter().fold(0f32, |acc1, val1| {
-            acc1 + val1
-                .iter()
-                .fold(0f32, |acc2, val2| acc2 + val2.abs() as f32)
-        })
-    }) as f32;
     let quantized_6 = quantize(6f32, outputs.scale[0], outputs.zero_point[0]);
     for output_row in 0..OUTPUT_ROWS {
         for output_col in 0..OUTPUT_COLS {
             let view: TensorView<T, WEIGHTS_ROWS, WEIGHTS_COLS, INPUT_CHANS> =
                 input.view((output_row, output_col), 0, padding, strides);
-            for output_channel in 0..INPUT_CHANS {
+            for output_channel in 0..WEIGHTS_CHANS {
                 let val = outputs.buffer[0][(output_row, output_col)][output_channel]
                     .saturating_sub(outputs.zero_point[0]);
                 if !(match activation {
@@ -214,29 +209,23 @@ pub fn grad_depthwise_conv_2d_weights<
                         let zero_point: i32 = input.zero_point[0].to_superset();
                         if view.mask[(filter_row, filter_cols)] {
                             let tmp: i32 = view.buffer[(filter_row, filter_cols)][if output_channel
-                                <= INPUT_CHANS
+                                < INPUT_CHANS
                             {
                                 output_channel
                             } else {
                                 0
                             }]
                             .to_superset();
-                            accum[0][(filter_row, filter_cols)][output_channel] = accum[0]
-                                [(filter_row, filter_cols)][output_channel]
-                                + (tmp - zero_point)
-                                    * &output_grad[0][(output_row, output_col)][output_channel];
+                            accum[0][(filter_row, filter_cols)][output_channel] += (tmp
+                                - zero_point)
+                                * &output_grad[0][(output_row, output_col)][output_channel];
                         }
                     }
                 }
             }
         }
     }
-    accum.map(|batch| {
-        batch.map(|channels| {
-            channels
-                .map(|ch| T::from_superset_unchecked(&(ch as f32 / normalization_param).round()))
-        })
-    })
+    accum
 }
 pub fn grad_depthwise_conv_2d_bias<
     T: Trainable,
@@ -256,12 +245,12 @@ pub fn grad_depthwise_conv_2d_bias<
     output_grad: &Buffer4D<i32, 1, OUTPUT_ROWS, OUTPUT_COLS, WEIGHTS_CHANS>,
     activation: &FusedActivation,
     bias_scale: [f32; FILTERS_QUANTS],
-) -> SVector<f32, INPUT_CHANS> {
+) -> SVector<f32, WEIGHTS_CHANS> {
     let quantized_6 = quantize(6f32, outputs.scale[0], outputs.zero_point[0]);
-    let mut accum: SVector<i32, INPUT_CHANS> = SVector::zeros();
+    let mut accum: SVector<i32, WEIGHTS_CHANS> = SVector::zeros();
     for output_row in 0..OUTPUT_ROWS {
         for output_col in 0..OUTPUT_COLS {
-            for output_batch in 0..INPUT_CHANS {
+            for output_batch in 0..WEIGHTS_CHANS {
                 let val = outputs.buffer[0][(output_row, output_col)][output_batch]
                     .saturating_sub(outputs.zero_point[0]);
                 if !(match activation {
@@ -271,16 +260,15 @@ pub fn grad_depthwise_conv_2d_bias<
                 }) {
                     continue;
                 }
-                accum[output_batch] = accum[output_batch]
-                    .saturating_add(output_grad[0][(output_row, output_col)][output_batch]);
+                accum[output_batch] += output_grad[0][(output_row, output_col)][output_batch];
             }
         }
     }
     SMatrix::from_fn(|i, _| {
-        let filters_scale = weights.scale.get(i).copied().unwrap_or(weights.scale[0]);
-        let bias_scale_cur = bias_scale.get(i).copied().unwrap_or(bias_scale[0]);
-        let scale = bias_scale_cur / (filters_scale * input.scale[0]).powi(2);
+        // let filters_scale = weights.scale.get(i).copied().unwrap_or(weights.scale[0]);
+        // let bias_scale_cur = bias_scale.get(i).copied().unwrap_or(bias_scale[0]);
+        // let scale = bias_scale_cur / (filters_scale * input.scale[0]).powi(2);
         let tmp: f32 = accum[i] as f32;
-        tmp
+        tmp * bias_scale.get(i).unwrap_or(&bias_scale[0])
     })
 }

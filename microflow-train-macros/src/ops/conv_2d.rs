@@ -329,11 +329,12 @@ impl<T: TokenQuantized> TrainToTokens for TokenConv2D<T> {
             //     batch_size,
             //     learning_rate,
             // );
-            microflow::update_layer::update_weights_4D(
+            microflow::update_layer::update_weights_clip_4D(
                 &mut #weights_ident,
                 &#weights_gradient_ident,
                 batch_size,
                 learning_rate,
+                #gradient_norm,
             );
             microflow::update_layer::update_weights_2D_float(
                 &mut #constants_ident.0,

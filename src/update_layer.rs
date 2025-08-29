@@ -431,8 +431,7 @@ pub fn accumulate_gradient_4D<
             for col in 0..COLS {
                 for channel in 0..CHANS {
                     let tmp: i32 = current_gradient[batch][(row, col)][channel].to_superset();
-                    weights_gradient[batch][(row, col)][channel] =
-                        tmp.saturating_add(weights_gradient[batch][(row, col)][channel]);
+                    weights_gradient[batch][(row, col)][channel] += tmp;
                 }
             }
         }

@@ -22,6 +22,8 @@ pub(crate) struct TokenDepthwiseConv2D<T: TokenQuantized> {
     pub(crate) layer_index: i32,
     pub(crate) scale_bias: Vec<f32>,
     pub(crate) train: bool,
+    pub(crate) back_norm: f32,
+    pub(crate) gradient_norm: f32,
 }
 
 /// Parses the [`TokenDepthwiseConv2D`] struct from the given operator.
@@ -38,6 +40,8 @@ pub(crate) fn parse_indexed(
     buffers: Vector<ForwardsUOffset<Buffer>>,
     index: usize,
     layer_index: i32,
+    back_norm: f32,
+    gradient_norm: f32,
 ) -> Box<dyn TrainToTokens> {
     let inputs = operator.inputs().unwrap();
     let input_type = tensors.get(inputs.get(0) as usize).type_();
@@ -48,6 +52,8 @@ pub(crate) fn parse_indexed(
             buffers,
             index,
             layer_index,
+            back_norm,
+            gradient_norm,
         )),
         TensorType::UINT8 => Box::new(TokenDepthwiseConv2D::<u8>::new(
             operator,
@@ -55,6 +61,8 @@ pub(crate) fn parse_indexed(
             buffers,
             index,
             layer_index,
+            back_norm,
+            gradient_norm,
         )),
         _ => unimplemented!(),
     }
@@ -78,10 +86,10 @@ pub(crate) fn parse(
     let input_type = tensors.get(inputs.get(0) as usize).type_();
     match input_type {
         TensorType::INT8 => Box::new(TokenDepthwiseConv2D::<i8>::new(
-            operator, tensors, buffers, index, -1,
+            operator, tensors, buffers, index, -1, -1f32, -1f32,
         )),
         TensorType::UINT8 => Box::new(TokenDepthwiseConv2D::<u8>::new(
-            operator, tensors, buffers, index, -1,
+            operator, tensors, buffers, index, -1, -1f32, -1f32,
         )),
         _ => unimplemented!(),
     }
@@ -102,6 +110,8 @@ impl<T: TokenQuantized> TokenDepthwiseConv2D<T> {
         buffers: Vector<ForwardsUOffset<Buffer>>,
         index: usize,
         layer_index: i32,
+        back_norm: f32,
+        gradient_norm: f32,
     ) -> Self {
         let inputs = operator.inputs().unwrap();
         let input = TokenTensor4D::from_empty_tensor(tensors.get(inputs.get(0) as usize));
@@ -129,6 +139,8 @@ impl<T: TokenQuantized> TokenDepthwiseConv2D<T> {
             layer_index,
             train: false,
             scale_bias: biases.scale,
+            back_norm,
+            gradient_norm,
         }
     }
 
@@ -187,7 +199,7 @@ impl<T: TokenQuantized> TrainToTokens for TokenDepthwiseConv2D<T> {
         let dim10 = self.constants.1.shape().0;
         let dim11 = self.constants.1.shape().1;
         let constants_field_type: syn::Type = parse_quote! {
-            ( Buffer2D<f32, #dim00, #dim01>, Buffer2D<f32, #dim10, #dim11>,)
+            ( microflow::buffer::Buffer2D<f32, #dim00, #dim01>, microflow::buffer::Buffer2D<f32, #dim10, #dim11>,)
         };
 
         let constants_field: syn::Field = syn::parse_quote! {
@@ -200,7 +212,7 @@ impl<T: TokenQuantized> TrainToTokens for TokenDepthwiseConv2D<T> {
             #constants_gradient_field_name: #constants_field_type
         };
         let filters_field_gradient: syn::Field = syn::parse_quote! {
-            #filters_gradient_ident: Buffer4D<i32,#filters_shape_0,#filters_shape_1,#filters_shape_2,#filters_shape_3>
+            #filters_gradient_ident: microflow::buffer::Buffer4D<i32,#filters_shape_0,#filters_shape_1,#filters_shape_2,#filters_shape_3>
         };
         match &mut attrs.fields {
             syn::Fields::Named(ref mut fields_named) => {
@@ -224,7 +236,7 @@ impl<T: TokenQuantized> TrainToTokens for TokenDepthwiseConv2D<T> {
         let ts = quote! {
             #filters_ident : #filters,
             #constants_field_name : (#constants_0, #constants_1),
-            #filters_gradient_ident : array::from_fn(|_|SMatrix::from_fn(|_,_|array::from_fn(|_|0i32))),
+            #filters_gradient_ident : core::array::from_fn(|_|SMatrix::from_fn(|_,_|core::array::from_fn(|_|0i32))),
             #constants_gradient_field_name : (#constants_0_gradient, #constants_1_gradient),
         };
         ts.to_tokens(declarations);
@@ -267,6 +279,7 @@ impl<T: TokenQuantized> TrainToTokens for TokenDepthwiseConv2D<T> {
             .iter()
             .map(|x| quote! { #x })
             .collect::<Vec<_>>();
+        let backward_norm = self.back_norm;
         let prepend = quote! {
             let backward_gradient = microflow::gradient_depthwise_conv_2d::update_grad_depthwise_conv_2d(
                 &#input_ident,
@@ -281,10 +294,11 @@ impl<T: TokenQuantized> TrainToTokens for TokenDepthwiseConv2D<T> {
                 #view_padding,
                 [#(#bias_scale),*],
                 learning_rate,
+                #backward_norm
             );
-            println!("gradient weights: {}",weight_gradient.iter().fold(String::new(), |accarr, batch|accarr + &batch.map(|el|el.iter().fold(String::new(),|sum, el1|sum +" "+ &el1.to_string())).to_string()));
-            println!("gradient input: {}",backward_gradient[0].map(|el|el.iter().fold(String::new(),|sum, el1|sum +" " +&el1.to_string())));
-            println!("mean gradient: {}",backward_gradient[0].map(|el|el.iter().fold(0f32,|sum, el1|sum+(*el1 as f32).abs() / el.len() as f32)).mean());
+            // println!("gradient weights: {}",weight_gradient.iter().fold(String::new(), |accarr, batch|accarr + &batch.map(|el|el.iter().fold(String::new(),|sum, el1|sum +" "+ &el1.to_string())).to_string()));
+            // println!("gradient input: {}",backward_gradient[0].map(|el|el.iter().fold(String::new(),|sum, el1|sum +" " +&el1.to_string())));
+            // println!("mean gradient: {}",backward_gradient[0].map(|el|el.iter().fold(0f32,|sum, el1|sum+(*el1 as f32).abs() / el.len() as f32)).mean());
         };
         let mut ts = TokenStream2::new();
         prepend.to_tokens(&mut ts);
@@ -308,12 +322,14 @@ impl<T: TokenQuantized> TrainToTokens for TokenDepthwiseConv2D<T> {
             let field_ident = format_ident!("constants{}_gradient", self.layer_index as usize);
             parse_quote!(self.#field_ident)
         };
+        let gradient_norm = self.gradient_norm;
         let update = quote! {
-            microflow::update_layer::update_weights_4D(
+            microflow::update_layer::update_weights_clip_4D(
                 &mut #weights_ident,
                 &#weights_gradient_ident,
                 batch_size,
                 learning_rate,
+                #gradient_norm
             );
             microflow::update_layer::update_weights_2D_float(
                 &mut #constants_ident.0,
@@ -321,7 +337,7 @@ impl<T: TokenQuantized> TrainToTokens for TokenDepthwiseConv2D<T> {
                 batch_size,
                 learning_rate,
             );
-            #weights_gradient_ident = array::from_fn(|_|SMatrix::from_fn(|_,_|array::from_fn(|_|0i32)));
+            #weights_gradient_ident = core::array::from_fn(|_|SMatrix::from_fn(|_,_|core::array::from_fn(|_|0i32)));
             #constants_gradient_ident.0 = SMatrix::zeros();
         };
         update.to_tokens(updates);

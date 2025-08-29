@@ -260,6 +260,6 @@ pub fn grad_conv_2d_bias<
         let tmp: f32 = accum[i] as f32;
         // tmp * scale
         // tmp / normalization_param
-        tmp
+        tmp * bias_scale[i]
     })
 }

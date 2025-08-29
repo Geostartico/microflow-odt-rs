@@ -207,7 +207,28 @@ pub fn model(args: TokenStream, item: TokenStream) -> TokenStream {
                     )
                 }
                 BuiltinOperator::DEPTHWISE_CONV_2D => {
-                    depthwise_conv_2d::parse_indexed(operator, tensors, buffers, index, layer_num)
+                    let back_norm = if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Float(lit_int),
+                        ..
+                    }) = &args.back_norms.elems[layer_counter]
+                    {
+                        lit_int.base10_parse().unwrap()
+                    } else {
+                        abort_call_site!("error during norm parsing")
+                    };
+                    let grad_norm = if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Float(lit_int),
+                        ..
+                    }) = &args.grad_norms.elems[layer_counter]
+                    {
+                        lit_int.base10_parse().unwrap()
+                    } else {
+                        abort_call_site!("error during norm parsing")
+                    };
+                    layer_counter += 1;
+                    depthwise_conv_2d::parse_indexed(
+                        operator, tensors, buffers, index, layer_num, back_norm, grad_norm,
+                    )
                 }
                 BuiltinOperator::CONV_2D => {
                     let back_norm = if let syn::Expr::Lit(syn::ExprLit {
