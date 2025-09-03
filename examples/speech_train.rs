@@ -10,7 +10,8 @@ use std::fs::{read_dir, File};
 // struct Sine {}
 // #[model("models/train/lenet.tflite", 1, "mse", false)]
 // struct LeNet {}
-#[model("models/train/speech_small_softmax.tflite", 4, "crossentropy", true, [80000.0,0.0], [8192.0,8192.0])]
+// #[model("models/train/speech_small_softmax.tflite", 4, "crossentropy", true, [80000.0,0.0], [8192.0,8192.0])]
+#[model("models/train/speech_small_softmax.tflite", 2, "crossentropy", true, [0.0], [8192.0])]
 struct Speech {}
 
 fn main() {
