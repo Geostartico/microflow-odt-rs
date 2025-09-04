@@ -1,6 +1,7 @@
 use core::i32;
 
 use crate::{
+    activation::FusedActivation,
     buffer::{Buffer2D, Buffer4D},
     ops::softmax_borrow,
     quantize::{Quantized, Trainable},
@@ -271,6 +272,27 @@ pub fn clip_norm_2D<const ROWS: usize, const COLS: usize>(
         })
     }
 }
+pub fn clip_norm_2D_mut<const ROWS: usize, const COLS: usize>(
+    mat: &mut Buffer2D<i32, ROWS, COLS>,
+    clip_val: f32,
+) {
+    if clip_val <= 0f32 {
+        return;
+    } else {
+        let norm: f32 = safe_norm_2D(mat, 1);
+        let scale = if norm > clip_val {
+            clip_val / norm
+        } else {
+            return;
+        };
+        for row in 0..ROWS {
+            for col in 0..COLS {
+                let tmp: f32 = mat[(row, col)] as f32;
+                mat[(row, col)] = i32::from_superset_unchecked(&(tmp * scale))
+            }
+        }
+    }
+}
 pub fn clip_norm_4D<
     const BATCHES: usize,
     const ROWS: usize,
@@ -299,6 +321,36 @@ pub fn clip_norm_4D<
                 })
             })
         })
+    }
+}
+pub fn clip_norm_4D_mut<
+    const BATCHES: usize,
+    const ROWS: usize,
+    const COLS: usize,
+    const CHANS: usize,
+>(
+    mat: &mut Buffer4D<i32, BATCHES, ROWS, COLS, CHANS>,
+    clip_val: f32,
+) {
+    if clip_val <= 0f32 {
+        return;
+    } else {
+        let norm: f32 = safe_norm_4D(mat, 1);
+        let scale = if norm > clip_val {
+            clip_val / norm
+        } else {
+            return;
+        };
+        for batch in 0..BATCHES {
+            for row in 0..ROWS {
+                for col in 0..COLS {
+                    for chan in 0..CHANS {
+                        let tmp: f32 = mat[batch][(row, col)][chan] as f32;
+                        mat[batch][(row, col)][chan] = i32::from_superset_unchecked(&(tmp * scale));
+                    }
+                }
+            }
+        }
     }
 }
 pub fn update_weights_2D_float<const ROWS: usize, const COLS: usize>(
@@ -506,4 +558,17 @@ pub fn get_input_index(
         }
         TensorViewPadding::Valid => ((strides.0 * focus.0) as i32, (strides.1 * focus.1) as i32),
     }
+}
+pub fn is_cut_off<T: Trainable>(
+    x: T,
+    quantized_6: T,
+    zero_point: T,
+    activation: &FusedActivation,
+) -> bool {
+    let val = x.saturating_sub(zero_point);
+    !(match activation {
+        FusedActivation::Relu => val > T::zero(),
+        FusedActivation::Relu6 => val > T::zero() && val < quantized_6,
+        _ => true,
+    })
 }
