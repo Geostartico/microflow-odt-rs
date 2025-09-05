@@ -3,7 +3,7 @@ use crate::{
     buffer::{Buffer2D, Buffer4D},
     quantize::{quantize, Trainable},
     tensor::{Tensor4D, TensorView, TensorViewPadding},
-    update_layer::{accumulate_gradient_4D, clip_norm_4D, get_input_index, is_cut_off},
+    update_layer::{accumulate_gradient_4D, clip_norm_4D_mut, get_input_index, is_cut_off},
 };
 use core::{array, ops::Mul};
 use nalgebra::{SMatrix, SVector};
@@ -41,7 +41,7 @@ pub fn update_grad_conv_2d<
     learning_rate: f32,
     backwards_clip_val: f32,
 ) -> Buffer4D<i32, 1, INPUT_ROWS, INPUT_COLS, INPUT_CHANS> {
-    clip_norm_4D(&mut output_grad, backwards_clip_val);
+    clip_norm_4D_mut(&mut output_grad, backwards_clip_val);
     grad_conv_2d(
         input,
         weights,
@@ -52,6 +52,7 @@ pub fn update_grad_conv_2d<
         &activation,
         strides,
         padding,
+        bias_scale,
     )
 }
 pub fn update_bias_conv2d<const FILTER_QUANTS: usize, const FILTER_NUM: usize>(
@@ -231,6 +232,7 @@ pub fn grad_conv_2d<
     activation: &FusedActivation,
     strides: (usize, usize),
     padding: TensorViewPadding,
+    bias_scale: [f32; FILTERS_QUANTS],
 ) -> Buffer4D<i32, 1, INPUT_ROWS, INPUT_COLS, INPUT_CHANS> {
     let quantized_6 = quantize(6f32, outputs.scale[0], outputs.zero_point[0]);
     let mut accum: Buffer4D<i32, 1, INPUT_ROWS, INPUT_COLS, INPUT_CHANS> =
@@ -249,7 +251,8 @@ pub fn grad_conv_2d<
                     continue;
                 }
                 constants_gradient.0[output_batch] +=
-                    f32::from_subset(&output_grad[0][(output_row, output_col)][output_batch]);
+                    f32::from_subset(&output_grad[0][(output_row, output_col)][output_batch])
+                        * bias_scale.get(output_batch).unwrap_or(&bias_scale[0]);
                 let input_zero_point: i32 = input.zero_point[0].to_superset();
                 let coord = get_input_index(
                     WEIGHTS_ROWS,
