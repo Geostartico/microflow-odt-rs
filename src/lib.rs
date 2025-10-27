@@ -7,6 +7,7 @@
 #![no_std]
 
 pub use microflow_macros::*;
+pub use microflow_train_macros;
 
 pub mod activation;
 pub mod buffer;
