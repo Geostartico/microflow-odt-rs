@@ -119,11 +119,15 @@ impl<T: TokenQuantized> TokenFullyConnected<T> {
         let input = TokenTensor2D::from_empty_tensor(tensors.get(inputs.get(0) as usize));
         let weights =
             TokenTensor2D::from_buffered_tensor(tensors.get(inputs.get(1) as usize), buffers);
-        let biases =
-            TokenTensor2D::from_buffered_tensor(tensors.get(inputs.get(2) as usize), buffers);
         let output = TokenTensor2D::from_empty_tensor(
             tensors.get(operator.outputs().unwrap().get(0) as usize),
         );
+        let biases = if inputs.get(2) < 0 {
+            let num_bias = output.shape.get(1).unwrap();
+            TokenTensor2D::zeroed_tensor((*num_bias, 1))
+        } else {
+            TokenTensor2D::from_buffered_tensor(tensors.get(inputs.get(2) as usize), buffers)
+        };
         let options = operator
             .builtin_options_as_fully_connected_options()
             .unwrap();

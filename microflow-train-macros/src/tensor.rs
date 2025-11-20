@@ -2,7 +2,7 @@ use std::any::type_name;
 use std::mem::size_of;
 
 use flatbuffers::{ForwardsUOffset, Vector};
-use nalgebra::DMatrix;
+use nalgebra::{DMatrix, Dyn};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens};
 use simba::scalar::SupersetOf;
@@ -58,6 +58,21 @@ impl From<Padding> for TokenTensorViewPadding {
 }
 
 impl<T: TokenQuantized> TokenTensor2D<T> {
+    pub fn zeroed_tensor(shape: (usize, usize)) -> Self {
+        let shape = vec![shape.0, shape.1];
+        Self {
+            buffer: TokenBuffer2D {
+                0: Option::Some(DMatrix::from_element_generic(
+                    Dyn(shape[0]),
+                    Dyn(shape[1]),
+                    T::zeroed(),
+                )),
+            },
+            shape,
+            scale: vec![0f32],
+            zero_point: vec![T::from_superset_unchecked(&0f32)],
+        }
+    }
     /// Builds a [`TokenTensor2D`] from an empty [`Tensor`].
     ///
     /// # Arguments
