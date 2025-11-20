@@ -1,0 +1,3 @@
+[submodule "examples/examples/esp32_cam_microflow_train_saved/components/esp32-camera"]
+	path = examples/examples/esp32_cam_microflow_train_saved/components/esp32-camera
+	url = https://github.com/espressif/esp32-camera.git
