@@ -568,7 +568,7 @@ pub fn is_cut_off<T: Trainable>(
     let val = x.saturating_sub(zero_point);
     !(match activation {
         FusedActivation::Relu => val > T::zero(),
-        FusedActivation::Relu6 => val > T::zero() && val < quantized_6,
+        FusedActivation::Relu6 => val > T::zero() && val.saturating_add(zero_point) < quantized_6,
         _ => true,
     })
 }
