@@ -10,7 +10,8 @@ use std::fs::read_dir;
 // #[model("models/train/sine.tflite", 1, "mse", false)]
 // struct Sine {}
 // #[model("models/train/lenet.tflite", 5, "crossentropy", true, [30000.0,30000.0,0.0], [8192.0,4096.0,1024.0])]
-#[model("models/train/cifar10_depthwise.tflite", 3, "crossentropy", true, [50000.0,0.0], [10000.0,1024.0])]
+// #[model("models/train/cifar10_depthwise.tflite", 3, "crossentropy", true, [50000.0,0.0], [10000.0,1024.0])]
+#[model("models/train/cifar10_depthwise.tflite", 6, "crossentropy", true, [100000.0,100000.0,100000.0,0.0], [2000.0,0.0,10000.0,1024.0])]
 struct Cifar10 {}
 
 fn main() {
@@ -64,12 +65,17 @@ fn main() {
     let validation_1 =
         label_1.split_off((label_1.len() as f32 * (1f32 - validation_percentage)).round() as usize);
     let mut model = Cifar10::new();
-    let constants_last = model.constants1;
+    let constants_last = model.constants4;
     println!(
         "constants last layer {}, {}, {}, {}",
         constants_last.0, constants_last.1, constants_last.2, constants_last.3
     );
-    let constants_first_last = model.constants1;
+    let constants_conv = model.constants0;
+    println!(
+        "constants conv layer {}, {}",
+        constants_conv.0, constants_conv.1
+    );
+    let constants_first_last = model.constants3;
     println!(
         "constants last layer {}, {}, {}, {}",
         constants_first_last.0,
@@ -105,18 +111,18 @@ fn main() {
             .fold(0, |acc, el| acc + el),
         validation_vec.len()
     );
-    // let saturated = model
-    //     .filters0
-    //     .buffer
-    //     .iter()
-    //     .flat_map(|batch| {
-    //         batch.iter().flat_map(|chans| {
-    //             chans
-    //                 .iter()
-    //                 .map(|el| if *el >= 126 || *el <= -126 { 1 } else { 0 })
-    //         })
-    //     })
-    //     .fold(0, |acc, el| acc + el);
+    let saturated_conv = model
+        .filters0
+        .buffer
+        .iter()
+        .flat_map(|batch| {
+            batch.iter().flat_map(|chans| {
+                chans
+                    .iter()
+                    .map(|el| if *el >= 126 || *el <= -126 { 1 } else { 0 })
+            })
+        })
+        .fold(0, |acc, el| acc + el);
     let correct = validation_vec
         .iter()
         .map(|sample| {
@@ -134,33 +140,34 @@ fn main() {
         .unwrap();
     println!("correct: {}", correct);
     let saturated_last = model
-        .weights1
+        .weights4
         .buffer
         .map(|el| if el >= 126 || el <= -126 { 1 } else { 0 })
         .fold(0, |acc, el| acc + el);
     let saturated_first_last = model
-        .weights0
+        .weights3
         .buffer
         .map(|el| if el >= 126 || el <= -126 { 1 } else { 0 })
         .fold(0, |acc, el| acc + el);
+    println!("saturated params conv initially {}", saturated_conv);
     println!("saturated params last initially {}", saturated_last);
     println!(
         "saturated params first last initially {}",
         saturated_first_last
     );
     for epoch in 0..epochs {
-        // let initial = model
-        //     .filters0
-        //     .buffer
-        //     .clone()
-        //     .map(|batch| batch.map(|arr| arr.map(|el| el as i32)));
+        let initial_conv = model
+            .filters0
+            .buffer
+            .clone()
+            .map(|batch| batch.map(|arr| arr.map(|el| el as i32)));
         // let initial1 = model
         //     .filters1
         //     .buffer
         //     .clone()
         //     .map(|batch| batch.map(|arr| arr.map(|el| el as i32)));
-        let initial_last = model.weights1.buffer.clone().map(|el| el as i32);
-        let initial_first_last = model.weights0.buffer.clone().map(|el| el as i32);
+        let initial_last = model.weights4.buffer.clone().map(|el| el as i32);
+        let initial_first_last = model.weights3.buffer.clone().map(|el| el as i32);
         train_vec.shuffle(&mut rng());
         for (index, sample) in train_vec.iter().enumerate() {
             let y = if sample.1 == 0 {
@@ -208,23 +215,25 @@ fn main() {
             })
             .reduce(|acc, val| acc + val)
             .unwrap();
-        // let fin = model
-        //     .filters0
-        //     .buffer
-        //     .clone()
-        //     .map(|batch| batch.map(|arr| arr.map(|el| el as i32)));
+        let fin_conv = model
+            .filters0
+            .buffer
+            .clone()
+            .map(|batch| batch.map(|arr| arr.map(|el| el as i32)));
         // let fin1 = model
         //     .filters1
         //     .buffer
         //     .clone()
         //     .map(|batch| batch.map(|arr| arr.map(|el| el as i32)));
-        let fin_last = model.weights1.buffer.clone().map(|el| el as i32);
-        let fin_first_last = model.weights0.buffer.clone().map(|el| el as i32);
-        // let diff: Buffer4D<i32, 16, 3, 3, 16> = core::array::from_fn(|batch| {
-        //     SMatrix::from_fn(|i, j| {
-        //         core::array::from_fn(|chan| fin[batch][(i, j)][chan] - initial[batch][(i, j)][chan])
-        //     })
-        // });
+        let fin_last = model.weights4.buffer.clone().map(|el| el as i32);
+        let fin_first_last = model.weights3.buffer.clone().map(|el| el as i32);
+        let diff_conv: Buffer4D<i32, 32, 3, 3, 32> = core::array::from_fn(|batch| {
+            SMatrix::from_fn(|i, j| {
+                core::array::from_fn(|chan| {
+                    fin_conv[batch][(i, j)][chan] - initial_conv[batch][(i, j)][chan]
+                })
+            })
+        });
         // let diff1: Buffer4D<i32, 16, 3, 3, 16> = core::array::from_fn(|batch| {
         //     SMatrix::from_fn(|i, j| {
         //         core::array::from_fn(|chan| {
@@ -236,14 +245,14 @@ fn main() {
             SMatrix::from_fn(|i, j| fin_last[(i, j)] - initial_last[(i, j)]);
         let diff_first_last: Buffer2D<i32, 512, 64> =
             SMatrix::from_fn(|i, j| fin_first_last[(i, j)] - initial_first_last[(i, j)]);
-        // let changed = diff
-        //     .iter()
-        //     .flat_map(|batch| {
-        //         batch
-        //             .iter()
-        //             .flat_map(|arr| arr.iter().map(|el| if *el != 0 { 1 } else { 0 }))
-        //     })
-        //     .fold(0, |acc, el| acc + el);
+        let changed_conv = diff_conv
+            .iter()
+            .flat_map(|batch| {
+                batch
+                    .iter()
+                    .flat_map(|arr| arr.iter().map(|el| if *el != 0 { 1 } else { 0 }))
+            })
+            .fold(0, |acc, el| acc + el);
         // let changed = diff1
         //     .iter()
         //     .flat_map(|batch| {
@@ -260,17 +269,17 @@ fn main() {
             .iter()
             .map(|el| if *el != 0 { 1 } else { 0 })
             .fold(0, |acc, el| acc + el);
-        // let saturated = model
-        //     .filters0
-        //     .buffer
-        //     .iter()
-        //     .flat_map(|batch| {
-        //         batch.iter().flat_map(|arr| {
-        //             arr.iter()
-        //                 .map(|el| if *el >= 126 || *el <= -126 { 1 } else { 0 })
-        //         })
-        //     })
-        //     .fold(0, |acc, el| acc + el);
+        let saturated_conv = model
+            .filters0
+            .buffer
+            .iter()
+            .flat_map(|batch| {
+                batch.iter().flat_map(|arr| {
+                    arr.iter()
+                        .map(|el| if *el >= 126 || *el <= -126 { 1 } else { 0 })
+                })
+            })
+            .fold(0, |acc, el| acc + el);
         // println!("saturated params {}", saturated);
         // println!(
         //     "changed params {}/{}",
@@ -283,18 +292,27 @@ fn main() {
         //     diff.len() * diff[0].shape().0 * diff[0].shape().0 * diff[0][0].len()
         // );
         let saturated_last = model
-            .weights1
+            .weights4
             .buffer
             .map(|el| if el >= 126 || el <= -126 { 1 } else { 0 })
             .fold(0, |acc, el| acc + el);
         let saturated_first_last = model
-            .weights0
+            .weights3
             .buffer
             .map(|el| if el >= 126 || el <= -126 { 1 } else { 0 })
             .fold(0, |acc, el| acc + el);
+        println!("saturated params conv {}", saturated_conv);
         println!("saturated params last {}", saturated_last);
         println!("saturated params first last {}", saturated_first_last);
 
+        println!(
+            "changed params conv {}/{}",
+            changed_conv,
+            diff_conv.len()
+                * diff_conv[0].shape().0
+                * diff_conv[0].shape().1
+                * diff_conv[0][(0, 0)].len()
+        );
         println!(
             "changed params last {}/{}",
             changed_last,
@@ -305,6 +323,11 @@ fn main() {
             changed_first_last,
             diff_first_last.shape().0 * diff_first_last.shape().1
         );
+        let constants_conv = model.constants0;
+        // println!(
+        //     "constants conv layer {}, {}",
+        //     constants_conv.0, constants_conv.1
+        // );
         println!("validation accuracy : {}/{}", correct, validation_vec.len());
         println!("finished epoch {}", epoch)
     }
