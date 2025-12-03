@@ -14,6 +14,7 @@ use syn::{parse_quote, ItemStruct};
 pub(crate) struct TokenFullyConnected<T: TokenQuantized> {
     pub(crate) weights: TokenTensor2D<T>,
     pub(crate) output: TokenTensor2D<T>,
+    pub(crate) input: Option<Vec<usize>>,
     pub(crate) fused_activation: TokenFusedActivation,
     pub(crate) constants: (TokenBuffer2D<f32>, f32, TokenBuffer2D<i32>, i32),
     pub(crate) constants_gradient: (TokenBuffer2D<f32>, f32, TokenBuffer2D<i32>, i32),
@@ -136,6 +137,11 @@ impl<T: TokenQuantized> TokenFullyConnected<T> {
         Self {
             weights,
             output,
+            input: if input.shape.len() != 2 {
+                Option::Some(input.shape.clone())
+            } else {
+                Option::None
+            },
             constants_gradient,
             fused_activation: options.fused_activation_function().into(),
             reshape: input.shape.len() != 2,
@@ -143,7 +149,7 @@ impl<T: TokenQuantized> TokenFullyConnected<T> {
             constants,
             index,
             layer_index,
-            input_zero_point: *input.zero_point.get(0).unwrap(),
+            input_zero_point: *(input.zero_point.get(0).unwrap()),
             train: false,
             back_norm,
             gradient_norm,
@@ -291,30 +297,67 @@ impl<T: TokenQuantized> TrainToTokens for TokenFullyConnected<T> {
             parse_quote!(self.#field_ident)
         };
         let back_norm = self.back_norm;
-        let prepend = quote! {
-            let backward_gradient = microflow::gradient_fully_connected::update_grad_fully_connected(
-                &#input_ident,
-                & #output_ident,
-                & #weights_ident,
-                &mut #weights_gradient_ident,
-                & #constants_ident,
-                &mut #constants_gradient_ident,
-                #activation,
-                backward_gradient,
-                #bias_scale,
-                learning_rate,
-                #back_norm,
-            );
-            // println!("input: {}, {}, {}", #input_ident.buffer.view((0, 0), (1, 4)),#input_ident.zero_point[0], #input_ident.scale[0]);
-            // println!("output net: {}",#output_ident.buffer);
-            // println!("input: {}",#input_ident.buffer);
-            // println!("input_zero_point: {}",#input_ident.zero_point[0]);
-            // println!("weights_gradient: {}",#weights_gradient_ident);
-        };
-        let mut ts = TokenStream2::new();
-        prepend.to_tokens(&mut ts);
-        ts.extend(backward.clone());
-        *backward = ts;
+        if !self.reshape {
+            let prepend = quote! {
+                let backward_gradient = microflow::gradient_fully_connected::update_grad_fully_connected(
+                    &#input_ident,
+                    & #output_ident,
+                    & #weights_ident,
+                    &mut #weights_gradient_ident,
+                    & #constants_ident,
+                    &mut #constants_gradient_ident,
+                    #activation,
+                    backward_gradient,
+                    #bias_scale,
+                    learning_rate,
+                    #back_norm,
+                );
+                // println!("input: {}, {}, {}", #input_ident.buffer.view((0, 0), (1, 4)),#input_ident.zero_point[0], #input_ident.scale[0]);
+                // println!("output net: {}",#output_ident.buffer);
+                // println!("input: {}",#input_ident.buffer);
+                // println!("input_zero_point: {}",#input_ident.zero_point[0]);
+                // println!("weights_gradient: {}",#weights_gradient_ident);
+            };
+            let mut ts = TokenStream2::new();
+            prepend.to_tokens(&mut ts);
+            ts.extend(backward.clone());
+            *backward = ts;
+        } else if let Some(input) = &self.input {
+            let shape_0 = input[0];
+            let shape_1 = input[1];
+            let shape_2 = input[2];
+            let shape_3 = input[3];
+            let prepend = quote! {
+                let backward_gradient :  Tensor4D<i32, #shape_0, #shape_1, #shape_2, #shape_3, 1>= Tensor2D{
+                    buffer: microflow::gradient_fully_connected::update_grad_fully_connected(
+                    &#input_ident,
+                    & #output_ident,
+                    & #weights_ident,
+                    &mut #weights_gradient_ident,
+                    & #constants_ident,
+                    &mut #constants_gradient_ident,
+                    #activation,
+                    backward_gradient,
+                    #bias_scale,
+                    learning_rate,
+                    #back_norm,
+                    ),
+                    zero_point: [0i32],
+                    scale: [1f32]
+                    }.into();
+                let backward_gradient = backward_gradient.buffer;
+                let #input_ident = #input_ident .into();
+                // println!("input: {}, {}, {}", #input_ident.buffer.view((0, 0), (1, 4)),#input_ident.zero_point[0], #input_ident.scale[0]);
+                // println!("output net: {}",#output_ident.buffer);
+                // println!("input: {}",#input_ident.buffer);
+                // println!("input_zero_point: {}",#input_ident.zero_point[0]);
+                // println!("weights_gradient: {}",#weights_gradient_ident);
+            };
+            let mut ts = TokenStream2::new();
+            prepend.to_tokens(&mut ts);
+            ts.extend(backward.clone());
+            *backward = ts;
+        }
     }
     fn switch_train(&mut self) {
         self.train = !self.train;
@@ -441,9 +484,10 @@ impl<T: TokenQuantized> ToTokens for TokenFullyConnected<T> {
 
         let ts = quote! {
             #weights_declaration
+            let #input_name = #input_name #reshape;
             let #output_name: microflow::tensor::Tensor2D<_, #(#output_shape),*, 1usize> =
                 #func_name(
-                    #reference_tok (#input_name #reshape),
+                    #reference_tok #input_name,
                     & #weights_ident,
                     [#output_scale],
                     [#output_zero_point],

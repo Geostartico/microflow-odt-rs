@@ -1,0 +1,3 @@
+warning: microflow v0.1.3 (/home/geostartico/Code/microflow-rs) ignoring invalid dependency `cargo-expand` which is missing a lib target
+error: no example target named `cifar10-C.rs`
+help: a target with a similar name exists: `cifar10-C`
