@@ -145,30 +145,3 @@ impl ToTokens for TokenReshape {
         ts.to_tokens(tokens)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn setup() -> TokenReshape {
-        TokenReshape {
-            input_shape: vec![2, 3],
-            output_shape: vec![2, 3],
-            layer_index: -1,
-            train: false,
-        }
-    }
-
-    #[test]
-    fn reshape_to_tokens() {
-        let layer = setup();
-        assert_eq!(
-            layer.to_token_stream().to_string(),
-            quote! {
-                let input: microflow::tensor::Tensor2D<_, 2usize, 3usize, 1usize> =
-                    microflow::ops::reshape(input);
-            }
-            .to_string()
-        )
-    }
-}

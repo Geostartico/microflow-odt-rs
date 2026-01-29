@@ -1,5 +1,5 @@
 [package]
-name = "microflow-train-macros"
+name = "microflow-odt-macros"
 description = "Macro crate of the MicroFlow train module, namely, the MicroFlow compiler"
 authors = ["Matteo Carnelos <matteo.carnelos98@gmail.com>","Giovanni Artico <giovanni.artico@gmail.com>"]
 documentation = "https://docs.rs/microflow-macros"

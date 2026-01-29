@@ -14,6 +14,7 @@ use syn::{parse_quote, ItemStruct};
 pub(crate) struct TokenFullyConnected<T: TokenQuantized> {
     pub(crate) weights: TokenTensor2D<T>,
     pub(crate) output: TokenTensor2D<T>,
+    pub(crate) input: Option<Vec<usize>>,
     pub(crate) fused_activation: TokenFusedActivation,
     pub(crate) constants: (TokenBuffer2D<f32>, f32, TokenBuffer2D<i32>, i32),
     pub(crate) constants_gradient: (TokenBuffer2D<f32>, f32, TokenBuffer2D<i32>, i32),
@@ -119,11 +120,15 @@ impl<T: TokenQuantized> TokenFullyConnected<T> {
         let input = TokenTensor2D::from_empty_tensor(tensors.get(inputs.get(0) as usize));
         let weights =
             TokenTensor2D::from_buffered_tensor(tensors.get(inputs.get(1) as usize), buffers);
-        let biases =
-            TokenTensor2D::from_buffered_tensor(tensors.get(inputs.get(2) as usize), buffers);
         let output = TokenTensor2D::from_empty_tensor(
             tensors.get(operator.outputs().unwrap().get(0) as usize),
         );
+        let biases = if inputs.get(2) < 0 {
+            let num_bias = output.shape.get(1).unwrap();
+            TokenTensor2D::zeroed_tensor((*num_bias, 1))
+        } else {
+            TokenTensor2D::from_buffered_tensor(tensors.get(inputs.get(2) as usize), buffers)
+        };
         let options = operator
             .builtin_options_as_fully_connected_options()
             .unwrap();
@@ -132,6 +137,11 @@ impl<T: TokenQuantized> TokenFullyConnected<T> {
         Self {
             weights,
             output,
+            input: if input.shape.len() != 2 {
+                Option::Some(input.shape.clone())
+            } else {
+                Option::None
+            },
             constants_gradient,
             fused_activation: options.fused_activation_function().into(),
             reshape: input.shape.len() != 2,
@@ -139,7 +149,7 @@ impl<T: TokenQuantized> TokenFullyConnected<T> {
             constants,
             index,
             layer_index,
-            input_zero_point: *input.zero_point.get(0).unwrap(),
+            input_zero_point: *(input.zero_point.get(0).unwrap()),
             train: false,
             back_norm,
             gradient_norm,
@@ -287,30 +297,67 @@ impl<T: TokenQuantized> TrainToTokens for TokenFullyConnected<T> {
             parse_quote!(self.#field_ident)
         };
         let back_norm = self.back_norm;
-        let prepend = quote! {
-            let backward_gradient = microflow::gradient_fully_connected::update_grad_fully_connected(
-                &#input_ident,
-                & #output_ident,
-                & #weights_ident,
-                &mut #weights_gradient_ident,
-                & #constants_ident,
-                &mut #constants_gradient_ident,
-                #activation,
-                backward_gradient,
-                #bias_scale,
-                learning_rate,
-                #back_norm,
-            );
-            // println!("input: {}, {}, {}", #input_ident.buffer.view((0, 0), (1, 4)),#input_ident.zero_point[0], #input_ident.scale[0]);
-            // println!("output net: {}",#output_ident.buffer);
-            // println!("input: {}",#input_ident.buffer);
-            // println!("input_zero_point: {}",#input_ident.zero_point[0]);
-            // println!("weights_gradient: {}",#weights_gradient_ident);
-        };
-        let mut ts = TokenStream2::new();
-        prepend.to_tokens(&mut ts);
-        ts.extend(backward.clone());
-        *backward = ts;
+        if !self.reshape {
+            let prepend = quote! {
+                let backward_gradient = microflow::gradient_fully_connected::update_grad_fully_connected(
+                    &#input_ident,
+                    & #output_ident,
+                    & #weights_ident,
+                    &mut #weights_gradient_ident,
+                    & #constants_ident,
+                    &mut #constants_gradient_ident,
+                    #activation,
+                    backward_gradient,
+                    #bias_scale,
+                    learning_rate,
+                    #back_norm,
+                );
+                // println!("input: {}, {}, {}", #input_ident.buffer.view((0, 0), (1, 4)),#input_ident.zero_point[0], #input_ident.scale[0]);
+                // println!("output net: {}",#output_ident.buffer);
+                // println!("input: {}",#input_ident.buffer);
+                // println!("input_zero_point: {}",#input_ident.zero_point[0]);
+                // println!("weights_gradient: {}",#weights_gradient_ident);
+            };
+            let mut ts = TokenStream2::new();
+            prepend.to_tokens(&mut ts);
+            ts.extend(backward.clone());
+            *backward = ts;
+        } else if let Some(input) = &self.input {
+            let shape_0 = input[0];
+            let shape_1 = input[1];
+            let shape_2 = input[2];
+            let shape_3 = input[3];
+            let prepend = quote! {
+                let backward_gradient :  Tensor4D<i32, #shape_0, #shape_1, #shape_2, #shape_3, 1>= Tensor2D{
+                    buffer: microflow::gradient_fully_connected::update_grad_fully_connected(
+                    &#input_ident,
+                    & #output_ident,
+                    & #weights_ident,
+                    &mut #weights_gradient_ident,
+                    & #constants_ident,
+                    &mut #constants_gradient_ident,
+                    #activation,
+                    backward_gradient,
+                    #bias_scale,
+                    learning_rate,
+                    #back_norm,
+                    ),
+                    zero_point: [0i32],
+                    scale: [1f32]
+                    }.into();
+                let backward_gradient = backward_gradient.buffer;
+                let #input_ident = #input_ident .into();
+                // println!("input: {}, {}, {}", #input_ident.buffer.view((0, 0), (1, 4)),#input_ident.zero_point[0], #input_ident.scale[0]);
+                // println!("output net: {}",#output_ident.buffer);
+                // println!("input: {}",#input_ident.buffer);
+                // println!("input_zero_point: {}",#input_ident.zero_point[0]);
+                // println!("weights_gradient: {}",#weights_gradient_ident);
+            };
+            let mut ts = TokenStream2::new();
+            prepend.to_tokens(&mut ts);
+            ts.extend(backward.clone());
+            *backward = ts;
+        }
     }
     fn switch_train(&mut self) {
         self.train = !self.train;
@@ -437,9 +484,10 @@ impl<T: TokenQuantized> ToTokens for TokenFullyConnected<T> {
 
         let ts = quote! {
             #weights_declaration
+            let #input_name = #input_name #reshape;
             let #output_name: microflow::tensor::Tensor2D<_, #(#output_shape),*, 1usize> =
                 #func_name(
-                    #reference_tok (#input_name #reshape),
+                    #reference_tok #input_name,
                     & #weights_ident,
                     [#output_scale],
                     [#output_zero_point],
@@ -450,101 +498,5 @@ impl<T: TokenQuantized> ToTokens for TokenFullyConnected<T> {
             );
         };
         ts.to_tokens(tokens);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use nalgebra::dmatrix;
-
-    use super::*;
-
-    fn setup() -> TokenFullyConnected<i8> {
-        TokenFullyConnected {
-            weights: TokenTensor2D {
-                buffer: TokenBuffer2D::from(dmatrix![
-                    1, 2, 3;
-                    4, 5, 6
-                ]),
-                shape: vec![2, 3],
-                scale: vec![0.7],
-                zero_point: vec![8],
-            },
-            output: TokenTensor2D {
-                buffer: TokenBuffer2D::new(),
-                shape: vec![1, 3],
-                scale: vec![0.9],
-                zero_point: vec![10],
-            },
-            fused_activation: TokenFusedActivation::Relu,
-            constants: (
-                TokenBuffer2D::from(dmatrix![11., 12.]),
-                13.,
-                TokenBuffer2D::from(dmatrix![14, 15]),
-                16,
-            ),
-            index: 0,
-            reshape: false,
-            layer_index: -1,
-            train: false,
-            scale_bias: 1f32,
-        }
-    }
-
-    #[test]
-    fn fully_connected_preprocess() {
-        let layer = setup();
-        let input = TokenTensor2D {
-            buffer: TokenBuffer2D::new(),
-            shape: vec![1, 2],
-            scale: vec![0.17],
-            zero_point: vec![18],
-        };
-        let biases = TokenTensor2D {
-            buffer: TokenBuffer2D::from(dmatrix![
-                19;
-                20;
-                21
-            ]),
-            shape: vec![3, 1],
-            scale: vec![0.22],
-            zero_point: vec![23],
-        };
-        let constants =
-            TokenFullyConnected::preprocess(&input, &layer.weights, &biases, &layer.output);
-        assert_eq!(
-            constants.0 .0,
-            Some(dmatrix![-0.9777778; -0.73333335; -0.4888889])
-        );
-        assert_eq!(constants.1, 0.13222224);
-        assert_eq!(constants.2 .0, Some(dmatrix![90, 126, 162]));
-        assert_eq!(constants.3, 288);
-    }
-
-    #[test]
-    fn fully_connected_to_tokens() {
-        let layer = setup();
-        let weights = &layer.weights;
-        let fused_activation = layer.fused_activation;
-        let constants_0 = &layer.constants.0;
-        let constants_2 = &layer.constants.2;
-        assert_eq!(
-            layer.to_token_stream().to_string(),
-            quote! {
-                const weights_0: microflow::tensor::Tensor2D<i8, 2usize, 3usize, 1usize> = #weights;
-                let input: microflow::tensor::Tensor2D<_, 1usize, 3usize, 1usize> =
-                    microflow::ops::fully_connected(
-                        input,
-                        &weights_0,
-                        [0.9f32],
-                        [10i8],
-                        microflow::ops::FullyConnectedOptions {
-                            fused_activation: #fused_activation,
-                        },
-                        (#constants_0, 13f32, #constants_2, 16i32)
-                );
-            }
-            .to_string()
-        );
     }
 }

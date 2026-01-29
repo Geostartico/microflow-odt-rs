@@ -255,6 +255,7 @@ pub fn model(args: TokenStream, item: TokenStream) -> TokenStream {
                     )
                 }
                 BuiltinOperator::AVERAGE_POOL_2D => {
+                    layer_counter += 1;
                     average_pool_2d::parse_indexed(operator, tensors, layer_num)
                 }
                 BuiltinOperator::SOFTMAX => softmax::parse_indexed(operator, tensors, layer_num),

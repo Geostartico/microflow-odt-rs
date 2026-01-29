@@ -22,7 +22,7 @@ include = [
 
 [dependencies]
 microflow-macros = { version = "0.1", path = "microflow-macros" }
-microflow-train-macros = { version = "0.1", path = "microflow-train-macros" }
+microflow-odt-macros = { version = "0.1", path = "microflow-odt-macros" }
 nalgebra = { version = "0.32", default-features = false, features = ["macros"] }
 simba = { version = "0.8", default-features = false }
 libm = "0.2"
@@ -36,6 +36,7 @@ csv = "1.2"
 criterion = "0.5"
 image = "0.25.6"
 rand = "0.9.1"
+zip = "4.5.0"
 
 [[bench]]
 name = "sine"
@@ -50,7 +51,7 @@ name = "person_detect"
 harness = false
 
 [workspace]
-members = ["microflow-macros", "microflow-train-macros"]
+members = ["microflow-macros", "microflow-odt-macros"]
 exclude = ["examples"]
 
 [patch.crates-io]

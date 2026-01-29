@@ -1,5 +1,5 @@
 use libm::{cosf, sinf, sqrtf};
-use microflow_train_macros::model;
+use microflow_odt_macros::model;
 use nalgebra::{matrix, SMatrix};
 use rand::Rng;
 use std::{fs::File, io::Write};

@@ -1,20 +1,20 @@
-use core::array;
-use microflow::buffer::{Buffer2D, Buffer4D};
 use microflow_odt_macros::model;
 use nalgebra::{matrix, SMatrix};
 use ndarray::Array3;
-use ndarray_npy::read_npy;
+use ndarray_npy::{read_npy, ReadNpyError};
 use rand::{rng, seq::SliceRandom};
-use std::fs::read_dir;
+use std::{array, fs::read_dir};
 // #[model("models/train/sine.tflite", 1, "mse", false)]
 // struct Sine {}
-// #[model("models/train/lenet.tflite", 5, "crossentropy", true, [30000.0,30000.0,0.0], [8192.0,4096.0,1024.0])]
-#[model("models/train/lenet.tflite", 5, "crossentropy", true, [30000.0,30000.0,0.0], [16000.0,4096.0,1024.0])]
-struct LeNet {}
+// #[model("models/train/lenet.tflite", 5, "crossentropy", true, [30000.0,30000.0,0.0], [4096.0,4096.0,1024.0])]
+// #[model("models/train/lenet.tflite", 3, "crossentropy", true, [30000.0,0.0], [4096.0,1024.0])]
+#[model("models/train/outside_inside.tflite", 3, "crossentropy", true, [10000.0, 0.0], [8000.0, 1024.0])]
+// #[model("models/train/lenet.tflite", 2, "crossentropy", true, [0.0], [1024.0])]
+struct InsideOutside {}
 
 fn main() {
-    let mut label_0: Vec<[SMatrix<[f32; 1], 28, 28>; 1]> =
-        read_dir("datasets/fine_dataset_lenet/label_0")
+    let mut label_0: Vec<[SMatrix<[f32; 3], 32, 32>; 1]> =
+        read_dir("datasets/inside_outside_dataset/label0")
             .unwrap()
             .filter(|el| el.is_ok())
             .map(|el| {
@@ -25,34 +25,51 @@ fn main() {
                 //     array.shape()[1],
                 //     array.shape()[2],
                 // );
-                [SMatrix::from_fn(|i, j| [*(array.get((i, j, 0)).unwrap())])]
+                [SMatrix::from_fn(|i, j| {
+                    array::from_fn(|k| *array.get((i, j, k)).unwrap())
+                })]
             })
             .collect();
     label_0.shuffle(&mut rng());
-    let mut label_1: Vec<[SMatrix<[f32; 1], 28, 28>; 1]> =
-        read_dir("datasets/fine_dataset_lenet/label_1")
+    let valid = read_dir("datasets/inside_outside_dataset/label1")
+        .unwrap()
+        .filter(|el| el.is_ok())
+        .map(|el| -> Result<Array3<f32>, ReadNpyError> {
+            let path = el.unwrap().path();
+            // println!("{}", path.to_str().unwrap());
+            read_npy(path)
+        })
+        .filter(|el| el.is_ok())
+        .count();
+    println!("valid: {}", valid);
+    let mut label_1: Vec<[SMatrix<[f32; 3], 32, 32>; 1]> =
+        read_dir("datasets/inside_outside_dataset/label1")
             .unwrap()
             .filter(|el| el.is_ok())
             .map(|el| {
-                let array: Array3<f32> = read_npy(el.unwrap().path()).unwrap();
+                let path = el.unwrap().path();
+                // println!("{}", path.to_str().unwrap());
+                let array: Array3<f32> = read_npy(path).unwrap();
                 // println!(
                 //     "{},{},{}",
                 //     array.shape()[0],
                 //     array.shape()[1],
                 //     array.shape()[2],
                 // );
-                [SMatrix::from_fn(|i, j| [*(array.get((i, j, 0)).unwrap())])]
+                [SMatrix::from_fn(|i, j| {
+                    array::from_fn(|k| *array.get((i, j, k)).unwrap())
+                })]
             })
             .collect();
     label_1.shuffle(&mut rng());
-    let validation_percentage = 0.1;
+    let validation_percentage = 0.2;
     let validation_0 =
         label_0.split_off((label_0.len() as f32 * (1f32 - validation_percentage)).round() as usize);
     let validation_1 =
         label_1.split_off((label_1.len() as f32 * (1f32 - validation_percentage)).round() as usize);
-    let mut model = LeNet::new();
+    let mut model = InsideOutside::new();
     let epochs = 25;
-    let batch = 50;
+    let batch = 20;
     let learning_rate = 0.01;
     let mut train_vec: Vec<_> = label_0
         .into_iter()
@@ -60,14 +77,14 @@ fn main() {
         .chain(label_1.into_iter().map(|x| (x, 1)))
         .collect();
     train_vec.shuffle(&mut rng());
-    train_vec = train_vec.drain(..2000).collect();
+    // train_vec = train_vec.drain(..2000).collect();
     let mut validation_vec: Vec<_> = validation_0
         .into_iter()
         .map(|x| (x, 0))
         .chain(validation_1.into_iter().map(|x| (x, 1)))
         .collect();
     validation_vec.shuffle(&mut rng());
-    let validation_vec: Vec<_> = validation_vec.drain(..200).collect();
+    // let validation_vec: Vec<_> = validation_vec.drain(..200).collect();
     let output_scale = 0.00390625;
     let output_zero_point = -128i8;
     println!("train elements {}", train_vec.len());
@@ -80,16 +97,9 @@ fn main() {
         validation_vec.len()
     );
     let saturated = model
-        .filters0
+        .weights0
         .buffer
-        .iter()
-        .flat_map(|batch| {
-            batch.iter().flat_map(|chans| {
-                chans
-                    .iter()
-                    .map(|el| if *el >= 126 || *el <= -126 { 1 } else { 0 })
-            })
-        })
+        .map(|el| if el >= 126 || el <= -126 { 1 } else { 0 })
         .fold(0, |acc, el| acc + el);
     let correct = validation_vec
         .iter()
@@ -109,11 +119,7 @@ fn main() {
     println!("correct: {}", correct);
     println!("saturated params initially {}", saturated);
     for _ in 0..epochs {
-        let initial = model
-            .filters0
-            .buffer
-            .clone()
-            .map(|batch| batch.map(|arr| arr.map(|el| el as i32)));
+        let initial = model.weights0.buffer.clone().cast::<i32>();
         train_vec.shuffle(&mut rng());
         for (index, sample) in train_vec.iter().enumerate() {
             let y = if sample.1 == 0 {
@@ -159,41 +165,18 @@ fn main() {
             })
             .reduce(|acc, val| acc + val)
             .unwrap();
-        let fin = model
-            .filters0
-            .buffer
-            .clone()
-            .map(|batch| batch.map(|arr| arr.map(|el| el as i32)));
-        let diff: Buffer4D<i32, 120, 5, 5, 16> = core::array::from_fn(|batch| {
-            SMatrix::from_fn(|i, j| {
-                core::array::from_fn(|chan| fin[batch][(i, j)][chan] - initial[batch][(i, j)][chan])
-            })
-        });
+        let fin = model.weights0.buffer.cast::<i32>();
+        let diff = fin - initial;
         let changed = diff
-            .iter()
-            .flat_map(|batch| {
-                batch
-                    .iter()
-                    .flat_map(|arr| arr.iter().map(|el| if *el != 0 { 1 } else { 0 }))
-            })
+            .map(|el| if el != 0 { 1 } else { 0 })
             .fold(0, |acc, el| acc + el);
         let saturated = model
-            .filters0
+            .weights0
             .buffer
-            .iter()
-            .flat_map(|batch| {
-                batch.iter().flat_map(|arr| {
-                    arr.iter()
-                        .map(|el| if *el >= 126 || *el <= -126 { 1 } else { 0 })
-                })
-            })
+            .map(|el| if el >= 126 || el <= -126 { 1 } else { 0 })
             .fold(0, |acc, el| acc + el);
         println!("saturated params {}", saturated);
-        println!(
-            "changed params {}/{}",
-            changed,
-            diff.len() * diff[0].shape().0 * diff[0].shape().0 * diff[0][0].len()
-        );
+        println!("changed params {}", changed);
         println!("validation accuracy : {}/{}", correct, validation_vec.len());
     }
 }

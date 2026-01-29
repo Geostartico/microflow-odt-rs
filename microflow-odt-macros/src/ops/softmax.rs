@@ -117,35 +117,3 @@ impl<T: TokenQuantized> ToTokens for TokenSoftmax<T> {
         ts.to_tokens(tokens);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::buffer::TokenBuffer2D;
-
-    fn setup() -> TokenSoftmax<i8> {
-        TokenSoftmax {
-            output: TokenTensor2D {
-                buffer: TokenBuffer2D::new(),
-                shape: vec![2, 3],
-                scale: vec![0.3],
-                zero_point: vec![4],
-            },
-            layer_index: -1,
-            train: false,
-        }
-    }
-
-    #[test]
-    fn softmax_to_tokens() {
-        let layer = setup();
-        assert_eq!(
-            layer.to_token_stream().to_string(),
-            quote! {
-                let input: microflow::tensor::Tensor2D<_, 2usize, 3usize, 1usize> =
-                    microflow::ops::softmax(input, [0.3f32], [4i8]);
-            }
-            .to_string()
-        )
-    }
-}

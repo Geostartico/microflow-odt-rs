@@ -1,4 +1,4 @@
-use microflow_train_macros::model;
+use microflow_odt_macros::model;
 use nalgebra::{matrix, SMatrix};
 use ndarray::Array3;
 use ndarray_npy::read_npy;
