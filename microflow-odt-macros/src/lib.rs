@@ -48,10 +48,17 @@ struct Args {
 }
 
 /// The entry point of MicroFlow.
-/// This attribute-like procedural macro can be placed on `structs` to implement the `predict()`
+/// This attribute-like procedural macro can be placed on `structs` to implement the `predict()` and predict_train()
 /// function based on the given model.
-/// The macro takes as input the path of the model, which must be in the TensorFlow Lite format
-/// (`.tflite`).
+/// The macro takes as input:
+/// - the path of the model, which must be in the TensorFlow Lite format (`.tflite`).
+/// - the number of layers to train (from the end of the model),
+/// - the loss function to use (either "mse" or "crossentropy"),
+/// - whether to skip the training of the last layer,
+/// - an array of float values representing the clipping norms for the backpropagation,
+/// - an array of float values representing the clipping norms for the gradients.
+/// differently from the inference, the training requires to store additional parameters for each layer to be trained 
+/// and the accumulated gradients during the backpropagation.
 #[proc_macro_error]
 #[proc_macro_attribute]
 pub fn model(args: TokenStream, item: TokenStream) -> TokenStream {

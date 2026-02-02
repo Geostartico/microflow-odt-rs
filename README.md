@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">MicroFlow</h1>
-<h3 align="center">A robust and efficient TinyML inference engine</h3>
+<h3 align="center">A robust and efficient TinyML inference and finetuning engine</h3>
 <p align="center">
   <a href="https://crates.io/crates/microflow"><img src="https://img.shields.io/crates/v/microflow"></a>
   <a href="https://docs.rs/microflow"><img src="https://img.shields.io/docsrs/microflow"></a>
@@ -12,8 +12,9 @@
 
 <br>
 
-MicroFlow is a robust and efficient TinyML inference engine designed for deploying machine learning models on embedded systems.
+MicroFlow is a robust and efficient TinyML inference and finetuning engine designed for deploying machine learning models on embedded systems.
 It was developed by Matteo Carnelos as part of his master's thesis project at the [University of Padova](https://www.unipd.it/en/) in collaboration with [Grepit AB](https://github.com/GrepitAB).
+The On-Device Training implementation was developed by Giovanni Artico as part of their master's thesis project at the [University of Padova](https://www.unipd.it/en/) in collaboration with [IAS-Lab](https://iaslab.dei.unipd.it/groups/mig/about/).
 
 MicroFlow uses a compiler-based approach, resulting in the following engine structure:
 
@@ -45,6 +46,7 @@ Currently, MicroFlow only supports models in the TensorFlow Lite format (`.tflit
 
 Here is a minimal example showcasing the usage of MicroFlow:
 
+#### Microflow inference
 ```rust ignore
 use microflow::model;
 
@@ -53,6 +55,28 @@ struct MyModel;
 
 fn main() {
     let prediction = MyModel::predict(input_data);
+}
+```
+#### Microflow ODT 
+```rust ignore
+use microflow_odt_macros::model;
+
+/*additional arguments:
+  number of layers to train
+  loss
+  skip the last layer
+  backward gradient norms
+  weights gradient norms
+*/
+#[model("path/to/model.tflite", 5, "crossentropy", true, [30000.0,30000.0,0.0], [16000.0,4096.0,1024.0])]
+struct MyModel;
+
+fn main() {
+    let model = MyModel::new()
+    for i in 0..batch_size{
+      let prediction = MyModel::predict_train(input_data, label, learning rate);
+    }
+    model.update_layers(batch, learning_rate);
 }
 ```
 
@@ -69,6 +93,8 @@ Otherwise, to run the example locally, just run the above command in the root di
 
 > [!NOTE]
 > For board examples, you might need to install additional tools and configure the runner to make the example work for your setup.
+> [!NOTE]
+> The datasets must be unzipped, Not all the datasets rquired to run the examples are present for size reasons
 
 ## Supported Operators
 
