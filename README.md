@@ -93,6 +93,7 @@ Otherwise, to run the example locally, just run the above command in the root di
 
 > [!NOTE]
 > For board examples, you might need to install additional tools and configure the runner to make the example work for your setup.
+
 > [!NOTE]
 > The datasets must be unzipped, Not all the datasets rquired to run the examples are present for size reasons
 
