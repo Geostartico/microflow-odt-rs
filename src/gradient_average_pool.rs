@@ -7,6 +7,36 @@ use crate::{
 };
 use core::array;
 use nalgebra::SMatrix;
+/// Computes the input gradient for a quantized average pooling layer.
+///
+/// This function propagates gradients from the output of an average pooling
+/// operation back to the corresponding input positions. Each output gradient
+/// value is distributed evenly across the receptive field defined by the
+/// pooling filter size, stride, and padding configuration.
+///
+/// If a fused activation function (such as ReLU or ReLU6) was applied during
+/// the forward pass, gradients are not propagated for output values that were
+/// clipped or inactive.
+///
+/// # Type Parameters
+/// - `T`: Quantized numeric type implementing the `Trainable` trait.
+/// - `INPUT_ROWS`, `INPUT_COLS`: Spatial dimensions of the input tensor.
+/// - `OUTPUT_ROWS`, `OUTPUT_COLS`: Spatial dimensions of the output tensor.
+/// - `INPUT_CHANS`: Number of input/output channels.
+/// - `FILTER_ROWS`, `FILTER_COLS`: Dimensions of the average pooling filter.
+///
+/// # Parameters
+/// - `input`: Reference to the original input tensor (used for shape and quantization context).
+/// - `outputs`: Output tensor produced during the forward average pooling pass.
+/// - `output_grad`: Gradient of the loss with respect to the pooling output.
+/// - `filter_shape`: Shape of the pooling filter.
+/// - `activation`: Fused activation function applied after pooling.
+/// - `strides`: Vertical and horizontal stride of the pooling operation.
+/// - `padding`: Padding mode (`Same` or `Valid`).
+///
+/// # Returns
+/// A `Buffer4D<i32, ...>` containing accumulated gradients with respect to
+/// each input element.
 pub fn gradient_average_pool<
     T: Trainable,
     const INPUT_ROWS: usize,
@@ -45,13 +75,13 @@ pub fn gradient_average_pool<
                 }
                 for filter_row in 0..FILTER_ROWS {
                     if (coord.0 + filter_row as i32) < 0
-                        || (coord.0 as usize + filter_row) >= FILTER_ROWS
+                        || (coord.0 as usize + filter_row) >= INPUT_ROWS
                     {
                         continue;
                     }
                     for filter_col in 0..FILTER_COLS {
                         if (coord.1 + filter_col as i32) < 0
-                            || (coord.1 as usize + filter_col) >= FILTER_COLS
+                            || (coord.1 as usize + filter_col) >= INPUT_COLS
                         {
                             continue;
                         }

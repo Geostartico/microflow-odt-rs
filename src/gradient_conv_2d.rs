@@ -8,7 +8,54 @@ use crate::{
 use core::{array, ops::Mul};
 use nalgebra::{SMatrix, SVector};
 use simba::scalar::SupersetOf;
-
+/// Computes gradients for a quantized 2-D convolution layer during backpropagation.
+///
+/// This function performs three gradient computations simultaneously:
+/// 1. **Weight gradients** (`weights_gradient`): accumulates gradients for each filter
+///    element using the corresponding input patch and output gradient.
+/// 2. **Bias/constant gradients** (`constants_gradient`): accumulates gradients for
+///    per-filter bias or scaling constants.
+/// 3. **Input gradients** (return value): propagates gradients back to the input tensor
+///    so earlier layers can be updated.
+///
+/// The function respects quantization parameters (scale and zero point) and subtracts
+/// zero-points before multiplication to correctly operate in the quantized domain.
+/// If a fused activation function (e.g., ReLU or ReLU6) was applied in the forward pass,
+/// gradients are not propagated for outputs that were clipped or inactive.
+///
+/// # Type Parameters
+/// - `T`: Quantized numeric type implementing the `Trainable` trait.
+/// - `INPUT_ROWS`, `INPUT_COLS`: Spatial dimensions of the input tensor.
+/// - `OUTPUT_ROWS`, `OUTPUT_COLS`: Spatial dimensions of the output tensor.
+/// - `INPUT_CHANS`: Number of input channels.
+/// - `WEIGHTS_ROWS`, `WEIGHTS_COLS`: Spatial dimensions of each convolution kernel.
+/// - `FILTERS_NUM`: Number of convolution filters (output channels).
+/// - `FILTERS_QUANTS`: Number of quantization groups for filter constants.
+///
+/// # Parameters
+/// - `input`: Input tensor used during the forward convolution.
+/// - `weights`: Quantized convolution filters.
+/// - `weights_gradient`: Mutable buffer where computed weight gradients are accumulated.
+/// - `constants_gradient`: Mutable tuple containing accumulated gradients for bias and scaling constants.
+/// - `outputs`: Output tensor from the forward convolution.
+/// - `output_grad`: Gradient of the loss with respect to the convolution output.
+/// - `activation`: Fused activation function applied after convolution.
+/// - `strides`: Convolution stride in `(row_stride, col_stride)` format.
+/// - `padding`: Padding mode (`Same` or `Valid`).
+/// - `bias_scale`: Scaling factors applied to bias gradients for each quantization group.
+///
+/// # Returns
+/// A `Buffer4D<i32, ...>` containing accumulated gradients with respect to the input tensor.
+///
+/// # Notes
+/// - Gradients are accumulated as `i32` to preserve precision before requantization.
+/// - Zero-points of both input and weights are subtracted before multiplication.
+/// - Output positions masked by padding are ignored.
+/// - Activation clipping prevents gradients from flowing through inactive neurons.
+///
+/// # Typical use
+/// Backpropagation step for quantized convolutional layers in embedded,
+/// fixed-point, or low-precision neural network training pipelines.
 pub fn update_grad_conv_2d<
     T: Trainable,
     const INPUT_ROWS: usize,
@@ -208,6 +255,53 @@ pub fn grad_conv_2d_weights<
     }
     accum
 }
+/// Computes gradients for a quantized 2-D convolution layer during backpropagation.
+///
+/// This function performs three gradient computations simultaneously:
+/// 1. **Weight gradients** (`weights_gradient`): accumulates gradients for each filter
+///    element using the corresponding input patch and output gradient.
+/// 2. **Bias/constant gradients** (`constants_gradient`): accumulates gradients for
+///    per-filter bias or scaling constants.
+/// 3. **Input gradients** (return value): propagates gradients back to the input tensor
+///    so earlier layers can be updated.
+///
+/// The function respects quantization parameters (scale and zero point) and subtracts
+/// zero-points before multiplication to correctly operate in the quantized domain.
+/// If a fused activation function (e.g., ReLU or ReLU6) was applied in the forward pass,
+/// gradients are not propagated for outputs that were clipped or inactive.
+///
+/// # Type Parameters
+/// - `T`: Quantized numeric type implementing the `Trainable` trait.
+/// - `INPUT_ROWS`, `INPUT_COLS`: Spatial dimensions of the input tensor.
+/// - `OUTPUT_ROWS`, `OUTPUT_COLS`: Spatial dimensions of the output tensor.
+/// - `INPUT_CHANS`: Number of input channels.
+/// - `WEIGHTS_ROWS`, `WEIGHTS_COLS`: Spatial dimensions of each convolution kernel.
+/// - `FILTERS_NUM`: Number of convolution filters (output channels).
+/// - `FILTERS_QUANTS`: Number of quantization groups for filter constants.
+///
+/// # Parameters
+/// - `input`: Input tensor used during the forward convolution.
+/// - `weights`: Quantized convolution filters.
+/// - `weights_gradient`: Mutable buffer where computed weight gradients are accumulated.
+/// - `constants_gradient`: Mutable tuple containing accumulated gradients for bias and scaling constants.
+/// - `outputs`: Output tensor from the forward convolution.
+/// - `output_grad`: Gradient of the loss with respect to the convolution output.
+/// - `activation`: Fused activation function applied after convolution.
+/// - `strides`: Convolution stride in `(row_stride, col_stride)` format.
+/// - `padding`: Padding mode (`Same` or `Valid`).
+/// - `bias_scale`: Scaling factors applied to bias gradients for each quantization group.
+///
+/// # Returns
+/// A `Buffer4D<i32, ...>` containing accumulated gradients with respect to the input tensor.
+///
+/// # Notes
+/// - Gradients are accumulated as `i32` to preserve precision before requantization.
+/// - Zero-points of both input and weights are subtracted before multiplication.
+/// - Output positions masked by padding are ignored.
+/// - Activation clipping prevents gradients from flowing through inactive neurons.
+///
+/// # Typical use
+/// Backpropagation step for quantized convolutional layers in embedded or low-precision
 pub fn grad_conv_2d<
     T: Trainable,
     const INPUT_ROWS: usize,

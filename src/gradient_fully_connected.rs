@@ -7,7 +7,49 @@ use crate::{
 };
 use nalgebra::{SMatrix, SVector};
 use simba::scalar::{SubsetOf, SupersetOf};
-
+/// Clips the output gradient and computes backpropagation gradients for a quantized fully connected layer.
+///
+/// This function performs the backward pass preparation and delegates the main gradient
+/// computation to `grad_fully_connected`. Before computing gradients, it applies optional
+/// L2-norm clipping to the output gradient to prevent exploding gradients and improve
+/// numerical stability during training.
+///
+/// The function updates:
+/// - **Weight gradients** (`weights_gradient`) via accumulation.
+/// - **Bias/constant gradients** (`constants_gradient`).
+/// - **Input gradients** (returned), which are propagated to the previous layer.
+///
+/// # Type Parameters
+/// - `T`: Quantized numeric type implementing the `Trainable` trait.
+/// - `INPUT_ROWS`: Number of input samples (batch size).
+/// - `INPUT_COLS`: Number of input features.
+/// - `WEIGHTS_COLS`: Number of output neurons.
+///
+/// # Parameters
+/// - `input`: Input tensor used in the forward fully connected layer.
+/// - `output`: Output tensor produced during the forward pass.
+/// - `weights`: Fully connected layer weights.
+/// - `weights_gradient`: Mutable buffer where weight gradients are accumulated.
+/// - `constants`: Fully connected layer constants (bias, scale, and quantization metadata).
+/// - `constants_gradient`: Mutable buffer where constant gradients are accumulated.
+/// - `activation`: Fused activation function applied during the forward pass.
+/// - `output_grad`: Gradient of the loss with respect to the layer output.
+/// - `bias_scale`: Scaling factor applied to bias gradients.
+/// - `learning_rate`: Learning rate (provided for training pipeline consistency).
+/// - `backwards_clip_val`: Maximum allowed L2 norm for the output gradient.
+///   If ≤ 0, no clipping is applied.
+///
+/// # Returns
+/// A `Buffer2D<i32, INPUT_ROWS, INPUT_COLS>` containing accumulated gradients
+/// with respect to the input tensor.
+///
+/// # Notes
+/// - Gradient clipping is applied in place before propagation.
+/// - Gradients are accumulated as `i32` to preserve precision in quantized training.
+/// - The returned input gradient is used for backpropagation into earlier layers.
+///
+/// # Typical use
+/// Backward pass step for quantized fully connected (dense) layers.
 pub fn update_grad_fully_connected<
     T: Trainable,
     const INPUT_ROWS: usize,
@@ -61,6 +103,53 @@ pub fn update_bias_fully_connected<const WEIGHTS_COLS: usize>(
 ) {
     constants.0 = SMatrix::from_fn(|i, j| constants.0[(i, j)] + bias_gradient[(i, j)]);
 }
+/// Computes gradients for a quantized fully connected (dense) layer.
+///
+/// This function performs the core backpropagation step for a fully connected layer,
+/// accumulating gradients for the weights and bias/constants while also computing
+/// the gradient with respect to the input tensor.
+///
+/// Specifically, it computes:
+/// - **Weight gradients** (`weights_gradient`): accumulated using the input activations
+///   (adjusted by the input zero point) multiplied by the output gradient.
+/// - **Bias/constant gradients** (`constants_gradient`): accumulated using the output gradient
+///   scaled by `bias_scale`.
+/// - **Input gradients** (returned): propagated using the weights (adjusted by their zero point)
+///   multiplied by the output gradient.
+///
+/// Quantization zero points are subtracted before multiplication to ensure correct
+/// gradient computation in the quantized domain.
+///
+/// If a fused activation function (such as ReLU or ReLU6) was applied during the forward
+/// pass, gradients are not propagated for outputs that were clipped or inactive.
+///
+/// # Type Parameters
+/// - `T`: Quantized numeric type implementing the `Trainable` trait.
+/// - `INPUT_ROWS`: Number of input samples (batch size).
+/// - `INPUT_COLS`: Number of input features.
+/// - `WEIGHTS_COLS`: Number of output neurons.
+///
+/// # Parameters
+/// - `input`: Input tensor from the forward pass.
+/// - `output`: Output tensor from the forward pass.
+/// - `weights`: Fully connected layer weights.
+/// - `weights_gradient`: Mutable buffer where weight gradients are accumulated.
+/// - `constants_gradient`: Mutable tuple storing accumulated gradients for bias/constants.
+/// - `activation`: Fused activation function applied during the forward pass.
+/// - `output_grad`: Gradient of the loss with respect to the output tensor.
+/// - `bias_scale`: Scaling factor applied to bias gradients.
+///
+/// # Returns
+/// A `Buffer2D<i32, INPUT_ROWS, INPUT_COLS>` containing accumulated gradients
+/// with respect to the input tensor.
+///
+/// # Notes
+/// - Gradients are accumulated as `i32` to preserve precision during quantized training.
+/// - Zero points for both inputs and weights are subtracted before multiplication.
+/// - Gradients are skipped for outputs clipped by the activation function.
+///
+/// # Typical use
+/// Core backward computation for quantized dense layers in low-precision neural networks.
 pub fn grad_fully_connected<
     T: Trainable,
     const INPUT_ROWS: usize,

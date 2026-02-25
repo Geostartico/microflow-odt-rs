@@ -10,6 +10,18 @@ use crate::{
 use libm::logf;
 use nalgebra::SMatrix;
 use simba::scalar::{SubsetOf, SupersetOf};
+
+/// Computes the L2 norm of a 2-D integer buffer, normalized by batch size.
+///
+/// Each element is first divided by `batch_size`, squared, and summed.
+/// The square root of the total sum is returned.
+///
+/// # Parameters
+/// - `mat`: Reference to the tensor buffer.
+/// - `batch_size`: Number of samples used to normalize the values.
+///
+/// # Returns
+/// The normalized L2 norm as `f32`.
 pub fn safe_norm_2D<const ROWS: usize, const COLS: usize>(
     mat: &Buffer2D<i32, ROWS, COLS>,
     batch_size: usize,
@@ -23,6 +35,17 @@ pub fn safe_norm_2D<const ROWS: usize, const COLS: usize>(
             .fold(0f32, |acc, el| acc + el as f32),
     )
 }
+/// Computes the L2 norm of a 4-D integer buffer, normalized by batch size.
+///
+/// Iterates over batches, rows, columns, and channels. Each value is divided
+/// by `batch_size`, squared, summed, and square-rooted.
+///
+/// # Parameters
+/// - `mat`: Reference to the 4-D tensor buffer.
+/// - `batch_size`: Number of samples used for normalization.
+///
+/// # Returns
+/// The normalized L2 norm as `f32`.
 pub fn safe_norm_4D<
     const BATCHES: usize,
     const ROWS: usize,
@@ -45,123 +68,20 @@ pub fn safe_norm_4D<
             .fold(0f32, |acc, el| acc + el as f32),
     )
 }
-pub fn update_weights_2D<T: Trainable, const ROWS: usize, const COLS: usize>(
-    weights: &mut Tensor2D<T, ROWS, COLS, 1>,
-    weights_gradient: &Buffer2D<i32, ROWS, COLS>,
-    batch_size: usize,
-    learning_rate: f32,
-) {
-    for i in 0..ROWS {
-        for j in 0..COLS {
-            let tmp: f32 = weights_gradient[(i, j)] as f32;
-            weights.buffer[(i, j)] = weights.buffer[(i, j)].saturating_sub(
-                T::from_superset(&(learning_rate * tmp / batch_size as f32).round()).unwrap(),
-            );
-        }
-    }
-}
-pub fn update_weights_perc_2D<
-    T: Trainable,
-    const ROWS: usize,
-    const COLS: usize,
-    const PERC: usize,
->(
-    weights: &mut Tensor2D<T, ROWS, COLS, 1>,
-    weights_gradient: &Buffer2D<i32, ROWS, COLS>,
-    batch_size: usize,
-    learning_rate: f32,
-) {
-    let mut gr = [(0, (0, 0)); PERC];
-    for i in 0..ROWS {
-        for j in 0..COLS {
-            let cur = weights_gradient[(i, j)].abs();
-            let mut insert = PERC + 1;
-            for k in (1..PERC + 1).rev() {
-                if cur > gr[k - 1].0 {
-                    if k < PERC {
-                        gr[k] = gr[k - 1];
-                    }
-                    insert = k - 1;
-                } else {
-                    break;
-                }
-            }
-            if insert < PERC {
-                gr[insert] = (cur, (i, j));
-            }
-        }
-    }
-    let max = gr[0].0;
-    let scale = (127f32 * batch_size as f32) / max as f32;
-    for (_, (row, col)) in gr {
-        let tmp: f32 = weights_gradient[(row, col)] as f32;
-        let tmp = learning_rate * tmp as f32 * scale / batch_size as f32;
-        weights.buffer[(row, col)] = weights.buffer[(row, col)]
-            // .saturating_sub(T::from_superset(&(tmp.abs().ceil() * tmp.signum())).unwrap())
-            .saturating_sub(T::from_superset(&tmp).unwrap())
-    }
-}
-// pub fn update_weights_max_2D<T: Trainable, const ROWS: usize, const COLS: usize>(
-//     weights: &mut Tensor2D<T, ROWS, COLS, 1>,
-//     weights_gradient: &Buffer2D<i32, ROWS, COLS>,
-//     batch_size: usize,
-//     learning_rate: f32,
-// ) {
-//     let mut max = 0;
-//     for i in 0..ROWS {
-//         for j in 0..COLS {
-//             let cur = weights_gradient[(i, j)].abs();
-//             if cur > max {
-//                 max = cur;
-//             }
-//         }
-//     }
-//     let scale = (127f32 * batch_size as f32) / max as f32;
-//     for row in 0..ROWS {
-//         for col in 0..COLS {
-//             let tmp: f32 = weights_gradient[(row, col)] as f32;
-//             let tmp = learning_rate * tmp as f32 * scale / batch_size as f32;
-//             weights.buffer[(row, col)] = weights.buffer[(row, col)]
-//                 // .saturating_sub(T::from_superset(&(tmp.abs().ceil() * tmp.signum())).unwrap())
-//                 .saturating_sub(T::from_superset(&tmp).unwrap())
-//         }
-//     }
-// }
-// pub fn update_weights_clip_2D<T: Trainable, const ROWS: usize, const COLS: usize>(
-//     weights: &mut Tensor2D<T, ROWS, COLS, 1>,
-//     weights_gradient: &Buffer2D<i32, ROWS, COLS>,
-//     batch_size: usize,
-//     learning_rate: f32,
-// ) {
-//     let mut min_val = i32::MAX;
-//     for i in 0..ROWS {
-//         for j in 0..COLS {
-//             let cur = weights_gradient[(i, j)].abs();
-//             if cur < min_val && cur > 0 {
-//                 min_val = cur;
-//             }
-//         }
-//     }
-//     let scale = (batch_size as f32) / min_val as f32;
-//     let clip_value = min_val as f32 * 127f32;
-//     for row in 0..ROWS {
-//         for col in 0..COLS {
-//             let tmp: f32 = weights_gradient[(row, col)] as f32;
-
-//             let tmp = learning_rate
-//                 * (if tmp.abs() < clip_value {
-//                     tmp as f32
-//                 } else {
-//                     clip_value * tmp.signum()
-//                 })
-//                 * scale
-//                 / batch_size as f32;
-//             weights.buffer[(row, col)] = weights.buffer[(row, col)]
-//                 // .saturating_sub(T::from_superset(&(tmp.abs().ceil() * tmp.signum())).unwrap())
-//                 .saturating_sub(T::from_superset(&tmp).unwrap())
-//         }
-//     }
-// }
+/// Updates a 4-D quantized weight tensor with optional gradient norm clipping.
+///
+/// If `clip_val > 0`, gradients are scaled so their global L2 norm does not exceed
+/// `clip_val`. Otherwise, standard SGD update is applied.
+///
+/// # Parameters
+/// - `weights`: Mutable quantized weight tensor.
+/// - `weights_gradient`: Accumulated integer gradients.
+/// - `batch_size`: Gradient normalization factor.
+/// - `learning_rate`: SGD learning rate.
+/// - `clip_val`: Maximum allowed gradient norm.
+///
+/// # Purpose
+/// Prevents exploding gradients in deep or recurrent networks.
 pub fn update_weights_clip_4D<
     T: Trainable,
     const BATCHES: usize,
@@ -216,6 +136,18 @@ pub fn update_weights_clip_4D<
         }
     }
 }
+/// Updates a 2-D quantized weight tensor with optional gradient norm clipping.
+///
+/// Computes the gradient L2 norm and scales gradients if the norm exceeds
+/// `clip_val`, then applies SGD update.
+///
+/// # Parameters
+/// - `weights`: Mutable quantized weight tensor.
+/// - `weights_gradient`: Accumulated gradients.
+/// - `batch_size`: Normalization factor.
+/// - `learning_rate`: SGD learning rate.
+/// - `clip_val`: Maximum gradient norm allowed.
+///
 pub fn update_weights_clip_norm_2D<T: Trainable, const ROWS: usize, const COLS: usize>(
     weights: &mut Tensor2D<T, ROWS, COLS, 1>,
     weights_gradient: &Buffer2D<i32, ROWS, COLS>,
@@ -253,6 +185,16 @@ pub fn update_weights_clip_norm_2D<T: Trainable, const ROWS: usize, const COLS: 
         }
     }
 }
+/// Returns a new 2-D buffer with gradients clipped to a maximum L2 norm.
+///
+/// If the norm exceeds `clip_val`, all elements are scaled proportionally.
+///
+/// # Parameters
+/// - `mat`: Source gradient buffer.
+/// - `clip_val`: Maximum allowed L2 norm.
+///
+/// # Returns
+/// A new clipped buffer.
 pub fn clip_norm_2D<const ROWS: usize, const COLS: usize>(
     mat: &Buffer2D<i32, ROWS, COLS>,
     clip_val: f32,
@@ -272,6 +214,14 @@ pub fn clip_norm_2D<const ROWS: usize, const COLS: usize>(
         })
     }
 }
+/// Clips a 2-D gradient buffer in place to a maximum L2 norm.
+///
+/// # Parameters
+/// - `mat`: Mutable gradient buffer.
+/// - `clip_val`: Maximum allowed L2 norm.
+///
+/// # Notes
+/// Does nothing if `clip_val <= 0` or norm is already within limit.
 pub fn clip_norm_2D_mut<const ROWS: usize, const COLS: usize>(
     mat: &mut Buffer2D<i32, ROWS, COLS>,
     clip_val: f32,
@@ -293,6 +243,14 @@ pub fn clip_norm_2D_mut<const ROWS: usize, const COLS: usize>(
         }
     }
 }
+/// Returns a new 4-D buffer with gradients clipped to a maximum L2 norm.
+///
+/// # Parameters
+/// - `mat`: Source gradient tensor.
+/// - `clip_val`: Maximum allowed L2 norm.
+///
+/// # Returns
+/// A new clipped tensor.
 pub fn clip_norm_4D<
     const BATCHES: usize,
     const ROWS: usize,
@@ -323,6 +281,14 @@ pub fn clip_norm_4D<
         })
     }
 }
+/// Clips a 4-D gradient tensor in place to a maximum L2 norm.
+///
+/// # Parameters
+/// - `mat`: Mutable gradient tensor.
+/// - `clip_val`: Maximum allowed L2 norm.
+///
+/// # Purpose
+/// Prevents excessively large updates during training.
 pub fn clip_norm_4D_mut<
     const BATCHES: usize,
     const ROWS: usize,
@@ -353,6 +319,16 @@ pub fn clip_norm_4D_mut<
         }
     }
 }
+/// Updates floating-point weights using SGD.
+///
+/// Applies:
+/// `weight -= learning_rate * gradient / batch_size`
+///
+/// # Parameters
+/// - `weights`: Mutable floating-point weights.
+/// - `weights_gradient`: Floating-point gradients.
+/// - `batch_size`: Normalization factor.
+/// - `learning_rate`: SGD learning rate.
 pub fn update_weights_2D_float<const ROWS: usize, const COLS: usize>(
     weights: &mut Buffer2D<f32, ROWS, COLS>,
     weights_gradient: &Buffer2D<f32, ROWS, COLS>,
@@ -365,7 +341,15 @@ pub fn update_weights_2D_float<const ROWS: usize, const COLS: usize>(
         }
     }
 }
-
+/// Updates a 4-D quantized weight tensor using SGD.
+///
+/// Each weight is adjusted using normalized integer gradients.
+///
+/// # Parameters
+/// - `weights`: Mutable quantized tensor.
+/// - `weights_gradient`: Accumulated gradients.
+/// - `batch_size`: Gradient normalization factor.
+/// - `learning_rate`: SGD learning rate.
 pub fn update_weights_4D<
     T: Trainable,
     const BATCHES: usize,
@@ -394,6 +378,15 @@ pub fn update_weights_4D<
         }
     }
 }
+/// Updates precomputed constants for a quantized fully connected layer.
+///
+/// Computes row sums of weights multiplied by the input zero-point,
+/// used to accelerate inference.
+///
+/// # Parameters
+/// - `weights`: Quantized weight tensor.
+/// - `constants`: Tuple storing scaling constants and offsets.
+/// - `input_zero_point`: Quantization zero point of the input.
 pub fn update_constants_fully_connected<
     T: Trainable,
     const ROWS: usize,
@@ -410,52 +403,13 @@ pub fn update_constants_fully_connected<
         .row_sum()
         * i32::from_subset(&input_zero_point)]));
 }
-pub fn update_weights_perc_4D<
-    T: Trainable,
-    const BATCHES: usize,
-    const ROWS: usize,
-    const COLS: usize,
-    const CHANS: usize,
-    const QUANTS: usize,
-    const PERC: usize,
->(
-    weights: &mut Tensor4D<T, BATCHES, ROWS, COLS, CHANS, QUANTS>,
-    weights_gradient: &Buffer4D<i32, BATCHES, ROWS, COLS, CHANS>,
-    batch_size: usize,
-    learning_rate: f32,
-) {
-    let mut gr = [(0, (0, 0, 0, 0)); PERC];
-    for batch in 0..BATCHES {
-        for i in 0..ROWS {
-            for j in 0..COLS {
-                for channel in 0..CHANS {
-                    let cur = weights_gradient[batch][(i, j)][channel].abs();
-                    let mut insert = PERC + 1;
-                    for k in (1..PERC + 1).rev() {
-                        if cur > gr[k - 1].0 {
-                            if k < PERC {
-                                gr[k] = gr[k - 1];
-                            }
-                            insert = k - 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    if insert < PERC {
-                        gr[insert] = (cur, (batch, i, j, channel));
-                    }
-                }
-            }
-        }
-    }
-    for (_, (batch, i, j, channel)) in gr {
-        let tmp: f32 = weights_gradient[batch][(i, j)][channel] as f32;
-        weights.buffer[batch][(i, j)][channel] = weights.buffer[batch][(i, j)][channel]
-            .saturating_sub(
-                T::from_superset(&(learning_rate * tmp / batch_size as f32).round()).unwrap(),
-            );
-    }
-}
+/// Accumulates quantized gradients into an integer gradient buffer.
+///
+/// Converts quantized values into integer representation and adds them.
+///
+/// # Parameters
+/// - `current_gradient`: Newly computed gradient.
+/// - `weights_gradient`: Accumulated gradient buffer.
 pub fn accumulate_gradient_2D<T: Trainable, const ROWS: usize, const COLS: usize>(
     current_gradient: &Buffer2D<T, ROWS, COLS>,
     weights_gradient: &mut Buffer2D<i32, ROWS, COLS>,
@@ -467,7 +421,11 @@ pub fn accumulate_gradient_2D<T: Trainable, const ROWS: usize, const COLS: usize
         }
     }
 }
-
+/// Accumulates gradients for a 4-D tensor into an integer buffer.
+///
+/// # Parameters
+/// - `current_gradient`: New quantized gradient tensor.
+/// - `weights_gradient`: Accumulated gradient tensor.
 pub fn accumulate_gradient_4D<
     T: Trainable,
     const BATCHES: usize,
@@ -501,7 +459,17 @@ pub fn mse_loss<T: Quantized, const ROWS: usize, const COLS: usize>(
     });
     0.5f32 * difference.component_mul(&difference).sum()
 }
-
+/// Computes gradient of MSE loss for quantized tensors.
+///
+/// Gradient:
+/// `prediction − ground_truth`
+///
+/// # Parameters
+/// - `output_p`: Predicted tensor.
+/// - `output_gt`: Ground truth tensor.
+///
+/// # Returns
+/// Integer gradient buffer.
 pub fn mse_grad<T: Trainable, const ROWS: usize, const COLS: usize>(
     output_p: &Tensor2D<T, ROWS, COLS, 1>,
     output_gt: &Tensor2D<T, ROWS, COLS, 1>,
@@ -510,6 +478,19 @@ pub fn mse_grad<T: Trainable, const ROWS: usize, const COLS: usize>(
         i32::from_subset(&output_p.buffer[(i, j)]) - i32::from_subset(&output_gt.buffer[(i, j)])
     })
 }
+/// Computes gradient of cross-entropy loss using softmax output.
+///
+/// Gradient:
+/// `softmax(input) − label`
+///
+/// # Parameters
+/// - `input`: Logits tensor.
+/// - `output_scale`: Output quantization scale.
+/// - `output_zero_point`: Output quantization zero point.
+/// - `label`: Ground truth labels.
+///
+/// # Returns
+/// Integer gradient buffer.
 pub fn crossentropy_grad<T: Trainable, const ROWS: usize, const COLS: usize>(
     input: &Tensor2D<T, ROWS, COLS, 1>,
     output_scale: f32,
@@ -540,7 +521,19 @@ pub fn cross_entropy_loss<T: Trainable, const ROWS: usize, const COLS: usize>(
         .component_mul(&softm.dequantize().map(|el| logf(el)))
         .sum()
 }
-
+/// Computes the input tensor index corresponding to a convolution window.
+///
+/// Accounts for padding mode and stride.
+///
+/// # Parameters
+/// - `view_rows`: Kernel height.
+/// - `view_cols`: Kernel width.
+/// - `focus`: Output position.
+/// - `padding`: Padding mode (Same or Valid).
+/// - `strides`: Convolution strides.
+///
+/// # Returns
+/// Input tensor index as `(row, col)`.
 pub fn get_input_index(
     view_rows: usize,
     view_cols: usize,
@@ -559,6 +552,18 @@ pub fn get_input_index(
         TensorViewPadding::Valid => ((strides.0 * focus.0) as i32, (strides.1 * focus.1) as i32),
     }
 }
+/// Determines whether a neuron output is inactive due to fused activation.
+///
+/// Checks clipping conditions for ReLU and ReLU6.
+///
+/// # Parameters
+/// - `x`: Quantized activation value.
+/// - `quantized_6`: Quantized representation of 6.
+/// - `zero_point`: Quantization zero point.
+/// - `activation`: Activation function.
+///
+/// # Returns
+/// `true` if the value is cut off (inactive), otherwise `false`.
 pub fn is_cut_off<T: Trainable>(
     x: T,
     quantized_6: T,
