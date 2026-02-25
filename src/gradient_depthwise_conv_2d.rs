@@ -8,7 +8,55 @@ use crate::{
 use core::array;
 use nalgebra::{SMatrix, SVector};
 use simba::scalar::SupersetOf;
-
+/// Clips the output gradient and computes backpropagation gradients for a quantized depthwise convolution layer.
+///
+/// This function prepares the backward pass for a depthwise convolution by first applying
+/// optional L2-norm clipping to the output gradients to prevent exploding gradients.
+/// It then calls `grad_depthwise_conv_2d` to compute and accumulate gradients for:
+/// - **Depthwise filter weights** (`weights_gradient`)
+/// - **Bias/constant terms** (`constants_gradient`)
+/// - **Input tensor** (returned), enabling gradient propagation to earlier layers.
+///
+/// Depthwise convolution differs from standard convolution in that each input channel
+/// is convolved with its own dedicated filter (no cross-channel mixing).
+///
+/// # Type Parameters
+/// - `T`: Quantized numeric type implementing the `Trainable` trait.
+/// - `INPUT_ROWS`, `INPUT_COLS`: Spatial dimensions of the input tensor.
+/// - `OUTPUT_ROWS`, `OUTPUT_COLS`: Spatial dimensions of the output tensor.
+/// - `INPUT_CHANS`: Number of input channels.
+/// - `WEIGHTS_ROWS`, `WEIGHTS_COLS`: Spatial dimensions of each depthwise filter.
+/// - `WEIGHTS_CHANS`: Number of depthwise filters (typically equal to input channels).
+/// - `FILTER_QUANTS`: Number of quantization groups for filter constants.
+///
+/// # Parameters
+/// - `input`: Input tensor from the forward depthwise convolution.
+/// - `weights`: Depthwise convolution filters.
+/// - `weights_gradient`: Mutable buffer where filter gradients are accumulated.
+/// - `constants`: Depthwise convolution constants (bias and quantization scaling).
+/// - `constants_gradient`: Mutable buffer where constant gradients are accumulated.
+/// - `outputs`: Output tensor produced during the forward pass.
+/// - `output_grad`: Gradient of the loss with respect to the output tensor.
+/// - `activation`: Fused activation function applied during the forward pass.
+/// - `strides`: Convolution stride in `(row_stride, col_stride)` format.
+/// - `padding`: Padding mode (`Same` or `Valid`).
+/// - `bias_scale`: Scaling factors applied to bias gradients per quantization group.
+/// - `learning_rate`: Learning rate (included for training pipeline consistency).
+/// - `backwards_clip_val`: Maximum allowed L2 norm for the output gradient.
+///   If ≤ 0, clipping is not applied.
+///
+/// # Returns
+/// A `Buffer4D<i32, ...>` containing accumulated gradients with respect to the input tensor.
+///
+/// # Notes
+/// - Gradient clipping is applied in place before propagation.
+/// - Gradients are accumulated as `i32` to preserve precision in quantized training.
+/// - Each channel is processed independently, consistent with depthwise convolution behavior.
+/// - Activation clipping prevents gradients from flowing through inactive neurons.
+///
+/// # Typical use
+/// Backward pass preparation for quantized depthwise convolution layers in embedded
+/// or low-precision convolutional neural networks.
 pub fn update_grad_depthwise_conv_2d<
     T: Trainable,
     const INPUT_ROWS: usize,
@@ -55,6 +103,64 @@ pub fn update_grad_depthwise_conv_2d<
         padding,
     )
 }
+/// Computes gradients for a quantized depthwise 2-D convolution layer.
+///
+/// This function performs the core backpropagation step for depthwise convolution,
+/// accumulating gradients for the depthwise filter weights and bias/constants,
+/// while also computing gradients with respect to the input tensor.
+///
+/// In depthwise convolution, each output channel corresponds to exactly one input
+/// channel and its own spatial filter. Gradients are therefore computed independently
+/// per channel, without cross-channel accumulation.
+///
+/// The function performs three main operations:
+/// - **Weight gradients** (`weights_gradient`): accumulated using the corresponding
+///   input patch values (adjusted by the input zero point) multiplied by the output gradient.
+/// - **Bias/constant gradients** (`constants_gradient`): accumulated per output channel,
+///   scaled by the appropriate bias quantization factor.
+/// - **Input gradients** (returned): propagated using the depthwise filter values
+///   (adjusted by their zero point) multiplied by the output gradient.
+///
+/// Quantization zero points for both inputs and weights are subtracted before
+/// multiplication to ensure mathematically correct gradient propagation.
+///
+/// If a fused activation function (such as ReLU or ReLU6) was applied during the
+/// forward pass, gradients are not propagated for outputs that were clipped or inactive.
+///
+/// # Type Parameters
+/// - `T`: Quantized numeric type implementing the `Trainable` trait.
+/// - `INPUT_ROWS`, `INPUT_COLS`: Spatial dimensions of the input tensor.
+/// - `OUTPUT_ROWS`, `OUTPUT_COLS`: Spatial dimensions of the output tensor.
+/// - `INPUT_CHANS`: Number of input channels.
+/// - `WEIGHTS_ROWS`, `WEIGHTS_COLS`: Spatial dimensions of each depthwise filter.
+/// - `WEIGHTS_CHANS`: Number of depthwise output channels (typically equal to input channels).
+/// - `FILTER_QUANTS`: Number of quantization groups for filter constants.
+///
+/// # Parameters
+/// - `input`: Input tensor used during the forward depthwise convolution.
+/// - `weights`: Depthwise convolution filters.
+/// - `weights_gradient`: Mutable buffer where filter gradients are accumulated.
+/// - `constants_gradient`: Mutable buffers where bias and scaling constant gradients are accumulated.
+/// - `outputs`: Output tensor produced during the forward pass.
+/// - `output_grad`: Gradient of the loss with respect to the output tensor.
+/// - `bias_scale`: Scaling factors applied to bias gradients for each quantization group.
+/// - `activation`: Fused activation function applied during the forward pass.
+/// - `strides`: Convolution stride in `(row_stride, col_stride)` format.
+/// - `padding`: Padding mode (`Same` or `Valid`).
+///
+/// # Returns
+/// A `Buffer4D<i32, ...>` containing accumulated gradients with respect to the input tensor.
+///
+/// # Notes
+/// - Gradients are accumulated as `i32` to preserve precision before requantization.
+/// - Input and weight zero points are subtracted before multiplication.
+/// - Padding masks ensure gradients are only applied to valid input regions.
+/// - Each channel is processed independently, consistent with depthwise convolution.
+/// - Activation clipping prevents gradients from propagating through inactive neurons.
+///
+/// # Typical use
+/// Core backward computation for quantized depthwise convolution layers in
+/// embedded or fixed-point convolutional neural networks.
 pub fn grad_depthwise_conv_2d<
     T: Trainable,
     const INPUT_ROWS: usize,
