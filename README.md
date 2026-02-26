@@ -2,7 +2,7 @@
   <img src="assets/microflow-logo.png" width="180">
 </p>
 
-<h1 align="center">MicroFlow</h1>
+<h1 align="center">MicroFlow & MicroFlow-ODT</h1>
 <h3 align="center">A robust and efficient TinyML inference and finetuning engine</h3>
 <p align="center">
   <a href="https://crates.io/crates/microflow"><img src="https://img.shields.io/crates/v/microflow"></a>
@@ -36,6 +36,12 @@ The compiler, which runs prior to the Rust compiler, is responsible for parsing 
 It generates the necessary source code to enable inference on the model.
 On the other hand, the runtime is a `[no_std]` component designed to run on the target MCU.
 It encompasses the implementation of operators, activation functions, and quantization procedures.
+## Microflow-ODT demo
+
+The method was tested on a simple robot equipped with an ESP32-CAM, by finetuning a generic CNN on data recorded directly on the device,
+achieving 75% final accuracy on the test, a 25% improvement over the original model
+[<img src="https://img.youtube.com/vi/WHIcj3JLLpU/hqdefault.jpg" width="600" height="300"/>](https://www.youtube.com/embed/WHIcj3JLLpU)
+
 
 ## Usage
 
@@ -81,6 +87,16 @@ fn main() {
 ```
 
 **[Documentation](https://docs.rs/microflow)**
+
+## Microflow-ODT usage
+
+The system designed needs some additional work compared to a plug-and-play framework like tensorflow.
+- The gradient accumulation is automatically done when `predict_train` is called, however after each batch (of arbitrary size)
+the `update_layers` has to be called with the batch size used to actually update the layers.
+1. First the model should be first tested in training with incrementally more layers.
+2. At each layer the norm of the gradient of the backpropagation and the one for the weight update should be picked.
+3. As overflows can happen if this isn't the chosen norms are too high, first a run in debug mode on a few batches should be done,then one in release mode to properly assess the performance achieved with the chosen parameters and gather information on the percentage of satuated parameters and parameters that have actually been updated. 
+4. This should be done at each layer, as the addition of new ones should not interfere with the later ones. 
 
 ## Examples
 
