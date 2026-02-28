@@ -39,9 +39,8 @@ It encompasses the implementation of operators, activation functions, and quanti
 ## Microflow-ODT demo
 
 The method was tested on a simple robot equipped with an ESP32-CAM, by finetuning a generic CNN on data recorded directly on the device,
-achieving 75% final accuracy on the test, a 25% improvement over the original model
-[<img src="https://img.youtube.com/vi/WHIcj3JLLpU/hqdefault.jpg" width="600" height="300"/>](https://www.youtube.com/embed/WHIcj3JLLpU)
-
+achieving 75% final accuracy on the test, a 25% improvement over the original model. The video of the demo is shown below:
+[![Watch the video](https://img.youtube.com/vi/WHIcj3JLLpU/hqdefault.jpg)](https://www.youtube.com/watch?v=WHIcj3JLLpU)
 
 ## Usage
 
