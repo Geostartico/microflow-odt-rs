@@ -30,6 +30,9 @@ graph LR
   compiler --> code
   compiler --> weights
 ```
+MicroFlow-ODT has the following pipeline, based on MicroFlow inference:
+
+![Microflow Pipeline](assets/implementation%20sheme-10.png)
 
 MicroFlow consists of two primary components: the compiler, represented by the `microflow-macros` crate, and the runtime, represented by the `microflow` crate.
 The compiler, which runs prior to the Rust compiler, is responsible for parsing and pre-processing the model.
@@ -87,7 +90,7 @@ fn main() {
 
 **[Documentation](https://docs.rs/microflow)**
 
-## Microflow-ODT usage
+## MicroFlow-ODT usage
 
 The system designed needs some additional work compared to a plug-and-play framework like tensorflow.
 - The gradient accumulation is automatically done when `predict_train` is called, however after each batch (of arbitrary size)
@@ -95,7 +98,15 @@ the `update_layers` has to be called with the batch size used to actually update
 1. First the model should be first tested in training with incrementally more layers.
 2. At each layer the norm of the gradient of the backpropagation and the one for the weight update should be picked.
 3. As overflows can happen if this isn't the chosen norms are too high, first a run in debug mode on a few batches should be done,then one in release mode to properly assess the performance achieved with the chosen parameters and gather information on the percentage of satuated parameters and parameters that have actually been updated. 
-4. This should be done at each layer, as the addition of new ones should not interfere with the later ones. 
+4. This should be done at each layer, as the addition of new ones should not interfere with the later ones.
+
+### Results using MicroFlow-ODT
+### CIFAR10-C and OpenLoris-Object Training Results
+
+|| 1 Layer | 2 Layers |
+|-------|-------|-------|
+|OpenLoris-Object| ![Run 1](assets/all_runs1-1.png) | ![Run 1](assets/all_runs2-1.png) |
+|Cifar10-C| ![Run 2](assets/all_runs1-2.png) | ![Run 2](assets/all_runs2-2.png) |
 
 ## Examples
 
